@@ -98,6 +98,38 @@ sharper SQL problem than it looks and didn't seem worth the risk without
 being able to verify it against a real database in this environment (see
 the hardening PR). Documented here rather than silently scoped out.
 
+## Plugins
+
+Drop a `.js` file in `PLUGINS_DIR` (default `./plugins`) and restart — no
+recompiling, no separate process, no Docker image changes. Each plugin
+runs in its own embedded [goja](https://github.com/dop251/goja) runtime
+(pure-Go JS, no Node) with a curated sandbox: `log`, `http.post`
+(fire-and-forget webhooks), and `kv.get`/`kv.set` (small persistent state,
+namespaced per plugin). No filesystem, no `require`, no arbitrary network.
+
+Two extension points:
+
+```js
+// Runs before every event is saved. Mutate it, or return null to drop it.
+function onEvent(event) {
+  if (event.type === "error") {
+    http.post("https://hooks.slack.com/services/...", { text: "Error: " + event.name });
+  }
+  return event;
+}
+
+// Runs once at load — declares a panel the dashboard renders server-side.
+// A plugin never ships its own frontend JS; this is why the dashboard is
+// server-rendered HTMX instead of a SPA.
+function registerPanel() {
+  return { title: "Calculator usage", eventName: "calculator_used", chart: "line" };
+}
+```
+
+Full API reference, limitations (a ~100ms time budget per `onEvent` call,
+sequential execution per plugin, why a plugin error keeps the event
+instead of dropping it) and working examples: [`docs/plugins.md`](docs/plugins.md).
+
 ## Security model
 
 Two kinds of keys, two trust levels:
@@ -138,20 +170,22 @@ internal/
     geoip        default (no-op) geo resolver
     apikey       default key hasher
     dashboard    embedded HTMX dashboard (templates, static, sessions)
+    plugins      goja plugin runtime + EventRepository decorator
 sdk/js           tracking script — plain <script> tag or npm package,
                  same file, embedded into the Go binary and served at /t.js
 migrations       plain SQL, applied by Postgres' docker-entrypoint-initdb.d
                  on first boot (nothing runs automatically after that)
+docs/plugins.md  plugin API reference and limitations
+plugins-examples reference plugin scripts (not loaded automatically —
+                 copy into PLUGINS_DIR to try one)
 ```
 
 ## Roadmap
 
-- Plugin runtime via an embedded JS interpreter (`goja`) — extension points
-  like `onEvent`/`registerPanel`, so custom logic (and custom dashboard
-  panels) ship as a `.js` file dropped in `plugins/`, no recompilation
 - MaxMind GeoIP adapter
 - Per-key metadata aggregation for custom events (see the Dashboard
-  section's scoping note)
+  section's scoping note), which would also let `registerPanel`'s
+  `groupBy` actually compute something
 
 ## License
 

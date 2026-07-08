@@ -11,6 +11,7 @@ import (
 	"github.com/antoniojosev/traccia/internal/adapters/dashboard"
 	"github.com/antoniojosev/traccia/internal/adapters/geoip"
 	"github.com/antoniojosev/traccia/internal/adapters/httpapi"
+	"github.com/antoniojosev/traccia/internal/adapters/plugins"
 	"github.com/antoniojosev/traccia/internal/adapters/postgres"
 	"github.com/antoniojosev/traccia/internal/adapters/useragent"
 	"github.com/antoniojosev/traccia/internal/config"
@@ -39,12 +40,23 @@ func main() {
 
 	// Default adapters — swap any of these for your own implementation of
 	// the matching port without touching a usecase.
-	events := postgres.NewEventRepository(pool)
+	rawEvents := postgres.NewEventRepository(pool)
 	projects := postgres.NewProjectRepository(pool)
 	visitors := postgres.NewVisitorRepository(pool)
 	uaParser := useragent.NewHeuristicParser()
 	geoResolver := geoip.NewNoopResolver()
 	keyHasher := apikey.NewSHA256Hasher()
+	pluginKV := postgres.NewPluginKVRepository(pool)
+
+	pluginManager, err := plugins.Load(cfg.PluginsDir, pluginKV)
+	if err != nil {
+		log.Fatalf("loading plugins from %s: %v", cfg.PluginsDir, err)
+	}
+
+	// Every usecase depends on ports.EventRepository, not Postgres directly
+	// — this decorator is the entire integration point for plugins' onEvent
+	// hook, and no usecase needs to know it exists.
+	events := plugins.NewEventRepositoryDecorator(rawEvents, pluginManager)
 
 	auth := usecase.NewAuthenticateProject(projects, keyHasher)
 	getStats := usecase.NewGetStats(events)
@@ -64,6 +76,7 @@ func main() {
 		GetStats:   getStats,
 		GetSamples: usecase.NewGetEventSamples(events),
 		Sessions:   dashboard.NewSessionManager(cfg.SessionSecret),
+		Panels:     dashboardPanels(pluginManager),
 	})
 
 	// The dashboard's own mux has entries for both the exact "/dashboard"
@@ -83,4 +96,13 @@ func main() {
 func deriveSessionSecret(adminToken string) string {
 	sum := sha256.Sum256([]byte("traccia-session-fallback:" + adminToken))
 	return hex.EncodeToString(sum[:])
+}
+
+func dashboardPanels(manager *plugins.Manager) []dashboard.PanelView {
+	panels := manager.Panels()
+	views := make([]dashboard.PanelView, 0, len(panels))
+	for _, p := range panels {
+		views = append(views, dashboard.PanelView{Title: p.Title, Kind: p.Chart})
+	}
+	return views
 }

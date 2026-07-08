@@ -13,6 +13,10 @@ import (
 )
 
 func newTestHandler(t *testing.T) (http.Handler, string /* apiKey */) {
+	return newTestHandlerWithPanels(t, nil)
+}
+
+func newTestHandlerWithPanels(t *testing.T, panels []dashboard.PanelView) (http.Handler, string /* apiKey */) {
 	t.Helper()
 	projects := newFakeProjectRepo()
 	events := &fakeEventRepo{}
@@ -28,6 +32,7 @@ func newTestHandler(t *testing.T) (http.Handler, string /* apiKey */) {
 		GetStats:   usecase.NewGetStats(events),
 		GetSamples: usecase.NewGetEventSamples(events),
 		Sessions:   dashboard.NewSessionManager("test-secret"),
+		Panels:     panels,
 	})
 
 	return handler, apiKey
@@ -171,6 +176,25 @@ func TestDashboard_LogoutClearsCookieAndRedirects(t *testing.T) {
 	cookies := rec.Result().Cookies()
 	if len(cookies) == 0 || cookies[0].MaxAge >= 0 {
 		t.Errorf("expected logout to clear the session cookie (negative MaxAge), got %+v", cookies)
+	}
+}
+
+func TestDashboard_RendersPluginPanels(t *testing.T) {
+	handler, apiKey := newTestHandlerWithPanels(t, []dashboard.PanelView{
+		{Title: "Calculator usage", Kind: "line"},
+	})
+	cookie := loginAndGetCookie(t, handler, apiKey)
+
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Calculator usage") {
+		t.Errorf("expected plugin panel title in output, got: %s", rec.Body.String())
 	}
 }
 

@@ -35,10 +35,17 @@ pass "create project -> $PROJECT_ID"
 curl -sf "$BASE_URL/t.js" | grep -q "traccia" || fail "/t.js did not return the tracking script"
 pass "GET /t.js"
 
+BROWSER_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+
+# A plain curl call (default UA) gets classified as bot traffic by the UA
+# parser's heuristic (it looks for "curl"/"wget"/etc, deliberately) and
+# excluded from stats by default — real traffic never looks like that, but
+# this script's own requests would, so every track() call impersonates a
+# real browser to actually exercise the pageview/stats path being tested.
 track() {
   local status
   status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/v1/track" \
-    -H "Content-Type: application/json" -d "$1")
+    -H "Content-Type: application/json" -H "User-Agent: $BROWSER_UA" -d "$1")
   [ "$status" = "202" ] || fail "track returned $status for payload: $1"
 }
 

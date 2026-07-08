@@ -2,6 +2,14 @@
 # Creates a demo project and floods it with a mix of pageviews, custom
 # events, errors and bot traffic, so the dashboard has something to show.
 # Requires a running instance (see `docker compose up`).
+#
+# This script fires requests as fast as bash can loop, all from one IP —
+# that reliably trips the default rate limit (RATE_LIMIT_PER_MINUTE=120)
+# well before EVENTS is reached, so the dashboard ends up with noticeably
+# fewer events than you'd expect from the numbers below. That's the rate
+# limiter working as intended (see README's Security model), not a bug in
+# this script. For a fuller demo, raise the limit just for seeding, e.g.
+# `RATE_LIMIT_PER_MINUTE=100000 docker compose up -d` before running this.
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
