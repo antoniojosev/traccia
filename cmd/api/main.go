@@ -7,12 +7,14 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/antoniojosev/traccia/internal/adapters/admin"
 	"github.com/antoniojosev/traccia/internal/adapters/apikey"
 	"github.com/antoniojosev/traccia/internal/adapters/dashboard"
 	"github.com/antoniojosev/traccia/internal/adapters/geoip"
 	"github.com/antoniojosev/traccia/internal/adapters/httpapi"
 	"github.com/antoniojosev/traccia/internal/adapters/plugins"
 	"github.com/antoniojosev/traccia/internal/adapters/postgres"
+	"github.com/antoniojosev/traccia/internal/adapters/session"
 	"github.com/antoniojosev/traccia/internal/adapters/useragent"
 	"github.com/antoniojosev/traccia/internal/config"
 	"github.com/antoniojosev/traccia/internal/usecase"
@@ -71,20 +73,32 @@ func main() {
 		RateLimiter:     httpapi.NewRateLimiter(cfg.RateLimitPerMinute),
 	})
 
+	dashboardSessions := session.New(cfg.SessionSecret, "traccia_session", "/dashboard")
 	dashboardHandler := dashboard.NewHandler(dashboard.Deps{
 		Auth:       auth,
 		GetStats:   getStats,
 		GetSamples: usecase.NewGetEventSamples(events),
-		Sessions:   dashboard.NewSessionManager(cfg.SessionSecret),
+		Sessions:   dashboardSessions,
 		Panels:     dashboardPanels(pluginManager),
 	})
 
-	// The dashboard's own mux has entries for both the exact "/dashboard"
-	// path and everything below it, so it needs registering at both here —
-	// a single "/dashboard/" prefix pattern wouldn't match bare "/dashboard".
+	adminHandler := admin.NewHandler(admin.Deps{
+		AdminToken:        cfg.AdminToken,
+		Sessions:          session.New(cfg.SessionSecret, "traccia_admin_session", "/admin"),
+		CreateProject:     usecase.NewCreateProject(projects, keyHasher),
+		ListProjects:      usecase.NewListProjects(projects),
+		GetProject:        usecase.NewGetProject(projects),
+		DashboardSessions: dashboardSessions,
+	})
+
+	// Each embedded panel's own mux has entries for both its exact root
+	// path and everything below it, so both need registering here — a
+	// single trailing-slash prefix pattern wouldn't match the bare path.
 	mux := http.NewServeMux()
 	mux.Handle("/dashboard", dashboardHandler)
 	mux.Handle("/dashboard/", dashboardHandler)
+	mux.Handle("/admin", adminHandler)
+	mux.Handle("/admin/", adminHandler)
 	mux.Handle("/", apiRouter)
 
 	log.Printf("traccia listening on :%s", cfg.Port)

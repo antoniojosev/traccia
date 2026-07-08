@@ -43,3 +43,21 @@ func (r *ProjectRepository) scanOne(ctx context.Context, query, arg string) (dom
 	}
 	return p, err
 }
+
+func (r *ProjectRepository) List(ctx context.Context) ([]domain.Project, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id, name, domain, api_key_hash, created_at FROM projects ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.Project
+	for rows.Next() {
+		var p domain.Project
+		if err := rows.Scan(&p.ID, &p.Name, &p.Domain, &p.APIKeyHash, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

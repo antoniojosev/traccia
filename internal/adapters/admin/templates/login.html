@@ -1,0 +1,13 @@
+{{define "admin-login-page"}}
+{{template "header" .}}
+<div class="login-box">
+  <h1>Traccia Admin</h1>
+  <p>Ingresa tu ADMIN_TOKEN para administrar los proyectos.</p>
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+  <form method="post" action="/admin/login">
+    <input type="password" name="admin_token" placeholder="ADMIN_TOKEN" required autofocus>
+    <button type="submit">Entrar</button>
+  </form>
+</div>
+{{template "footer" .}}
+{{end}}

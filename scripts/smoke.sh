@@ -92,5 +92,29 @@ curl -sf -b /tmp/traccia-smoke-cookies.txt "$BASE_URL/dashboard" | grep -q "Even
 rm -f /tmp/traccia-smoke-cookies.txt
 pass "dashboard login + overview render"
 
+ADMIN_REDIRECT=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/admin")
+[ "$ADMIN_REDIRECT" = "303" ] || fail "expected 303 redirect to login for /admin without a session, got $ADMIN_REDIRECT"
+pass "GET /admin without session -> 303 redirect to login"
+
+ADMIN_LOGIN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -c /tmp/traccia-smoke-admin-cookies.txt -X POST "$BASE_URL/admin/login" \
+  --data-urlencode "admin_token=$ADMIN_TOKEN")
+[ "$ADMIN_LOGIN_STATUS" = "303" ] || fail "expected 303 after admin login, got $ADMIN_LOGIN_STATUS"
+curl -sf -b /tmp/traccia-smoke-admin-cookies.txt "$BASE_URL/admin" | grep -q "Smoke Test" || fail "admin panel did not list the project created earlier"
+pass "admin login + project list"
+
+ADMIN_CREATE_HTML=$(curl -sf -b /tmp/traccia-smoke-admin-cookies.txt -X POST "$BASE_URL/admin/projects/new" \
+  --data-urlencode "name=Admin Panel Smoke" --data-urlencode "domain=admin-smoke.example.com")
+echo "$ADMIN_CREATE_HTML" | grep -q "trc_" || fail "admin project creation did not reveal an API key"
+ADMIN_PROJECT_ID=$(echo "$ADMIN_CREATE_HTML" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+[ -n "$ADMIN_PROJECT_ID" ] || fail "could not extract project_id from admin creation response"
+pass "admin creates project -> $ADMIN_PROJECT_ID"
+
+ADMIN_VIEW_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b /tmp/traccia-smoke-admin-cookies.txt -c /tmp/traccia-smoke-admin-cookies.txt \
+  -X POST "$BASE_URL/admin/projects/$ADMIN_PROJECT_ID/view")
+[ "$ADMIN_VIEW_STATUS" = "303" ] || fail "expected 303 from admin's view-dashboard action, got $ADMIN_VIEW_STATUS"
+curl -sf -b /tmp/traccia-smoke-admin-cookies.txt "$BASE_URL/dashboard" | grep -q "Eventos totales" || fail "dashboard did not render after admin's view-dashboard jump"
+rm -f /tmp/traccia-smoke-admin-cookies.txt
+pass "admin 'ver dashboard' jump mints a working dashboard session"
+
 echo
 echo "ALL SMOKE CHECKS PASSED"

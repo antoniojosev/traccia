@@ -22,6 +22,7 @@ type ProjectRepository interface {
 	Create(ctx context.Context, project domain.Project) error
 	FindByID(ctx context.Context, id string) (domain.Project, error)
 	FindByAPIKeyHash(ctx context.Context, apiKeyHash string) (domain.Project, error)
+	List(ctx context.Context) ([]domain.Project, error)
 }
 
 // VisitorRepository stores the durable identity set via Identify, keyed by

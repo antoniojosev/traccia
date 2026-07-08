@@ -22,8 +22,8 @@ cp .env.example .env   # set ADMIN_TOKEN to a long random string
 docker compose up -d
 ```
 
-Create a project (returns an API key you'll only see once — that key is
-only needed to *read* stats, not to send events):
+Create a project at `http://localhost:8080/admin` (log in with
+`ADMIN_TOKEN`) — see [Admin panel](#admin-panel) below. Or script it:
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/projects \
@@ -31,6 +31,9 @@ curl -X POST http://localhost:8080/api/v1/projects \
   -H "Content-Type: application/json" \
   -d '{"name": "My Site", "domain": "example.com"}'
 ```
+
+Either way you get back an API key you'll only see once — it's only
+needed to *read* stats, never to send events.
 
 Embed the tracking script on your site, using the `project_id` from the
 response above (this ID is public by design — see [Security model](#security-model)):
@@ -97,6 +100,23 @@ events with their metadata instead. Generic JSONB key aggregation is a
 sharper SQL problem than it looks and didn't seem worth the risk without
 being able to verify it against a real database in this environment (see
 the hardening PR). Documented here rather than silently scoped out.
+
+## Admin panel
+
+`/admin`, gated by `ADMIN_TOKEN` — a different, more privileged trust
+level than a project's own dashboard login. Create and list every project
+without touching curl:
+
+- **List** every project (name, domain, ID, created date)
+- **Create** a new one, with the same one-time API key reveal as the API
+- **Jump straight into a project's dashboard** without needing that
+  project's API key — the admin panel mints the dashboard session
+  directly, since `ADMIN_TOKEN` already implies more trust than any single
+  project's key
+
+`POST /api/v1/projects` (the API) still exists and isn't going anywhere —
+this is the human-friendly alternative for when you don't want to script
+it, not a replacement.
 
 ## Plugins
 
@@ -170,6 +190,8 @@ internal/
     geoip        default (no-op) geo resolver
     apikey       default key hasher
     dashboard    embedded HTMX dashboard (templates, static, sessions)
+    admin        embedded HTMX admin panel — create/list projects, jump to dashboard
+    session      shared HMAC-signed cookie sessions (dashboard + admin)
     plugins      goja plugin runtime + EventRepository decorator
 sdk/js           tracking script — plain <script> tag or npm package,
                  same file, embedded into the Go binary and served at /t.js
