@@ -7,25 +7,42 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/antoniojosev/traccia/internal/adapters/ratelimit"
 	"github.com/antoniojosev/traccia/internal/adapters/session"
 	"github.com/antoniojosev/traccia/internal/domain"
 	"github.com/antoniojosev/traccia/internal/usecase"
 )
 
 type Deps struct {
-	Auth       *usecase.AuthenticateProject
-	GetStats   *usecase.GetStats
-	GetSamples *usecase.GetEventSamples
-	Sessions   *session.Manager
-	// Panels are plugin-declared (see plugins.Manager.Panels), rendered
-	// here in the core so a plugin never ships its own frontend JS — the
-	// reason this dashboard is server-rendered HTMX instead of a SPA.
+	Auth                 *usecase.AuthenticateProject
+	GetStats             *usecase.GetStats
+	GetSamples           *usecase.GetEventSamples
+	GetMetadataBreakdown *usecase.GetMetadataBreakdown
+	Sessions             *session.Manager
+	// LoginLimiter is per-IP, much stricter than the ingest rate limit — a
+	// login attempt should never be as frequent as a pageview, and this is
+	// the only thing standing between an API key and brute-forcing it.
+	LoginLimiter *ratelimit.Limiter
+	// Panels are plugin-declared specs (see plugins.Manager.Panels),
+	// rendered here in the core so a plugin never ships its own frontend
+	// JS — the reason this dashboard is server-rendered HTMX instead of a
+	// SPA. Rows are computed fresh per request in handleOverview, not
+	// stored here — this slice is shared across every request.
 	Panels []PanelView
 }
 
+// PanelView is a plugin-declared panel spec. EventName/GroupBy come
+// straight from the plugin's registerPanel() and describe what to
+// compute; Rows is filled in per-request by handleOverview, never at
+// startup (Panels is shared across every request, so it must stay
+// read-only template data — no field one request fills in can leak into
+// another's response).
 type PanelView struct {
-	Title string
-	Kind  string
+	Title     string
+	Kind      string
+	EventName string
+	GroupBy   string
+	Rows      []domain.NameCount
 }
 
 func NewHandler(deps Deps) http.Handler {
@@ -33,13 +50,23 @@ func NewHandler(deps Deps) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /dashboard/login", handleLoginPage(tmpl))
-	mux.HandleFunc("POST /dashboard/login", handleLoginSubmit(deps, tmpl))
+	mux.HandleFunc("POST /dashboard/login", withLoginRateLimit(deps.LoginLimiter, handleLoginSubmit(deps, tmpl)))
 	mux.HandleFunc("POST /dashboard/logout", handleLogout(deps))
 	mux.HandleFunc("GET /dashboard", requireSession(deps, handleOverview(deps, tmpl)))
 	mux.HandleFunc("GET /dashboard/events/{type}/{name}", requireSession(deps, handleEventDrilldown(deps, tmpl)))
 	mux.Handle("GET /dashboard/static/", staticHandler())
 
 	return mux
+}
+
+func withLoginRateLimit(rl *ratelimit.Limiter, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !rl.Allow(ratelimit.ClientIP(r)) {
+			http.Error(w, "too many login attempts, try again later", http.StatusTooManyRequests)
+			return
+		}
+		next(w, r)
+	}
 }
 
 type contextKey string
@@ -142,7 +169,7 @@ func handleOverview(deps Deps, tmpl *template.Template) http.HandlerFunc {
 			IncludeBots:    includeBots,
 			Stats:          stats,
 			TimeseriesJSON: string(timeseriesJSON),
-			Panels:         deps.Panels,
+			Panels:         computePanelRows(r.Context(), deps, projectID, since, until),
 		}
 
 		templateName := "overview-page"
@@ -153,6 +180,37 @@ func handleOverview(deps Deps, tmpl *template.Template) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
+}
+
+// computePanelRows fills in each plugin panel's Rows for this request. It
+// copies Deps.Panels rather than mutating it — that slice is shared across
+// every concurrent request, so writing computed data into it directly
+// would leak one project's numbers into another's response.
+func computePanelRows(ctx context.Context, deps Deps, projectID string, since, until time.Time) []PanelView {
+	panels := make([]PanelView, len(deps.Panels))
+	copy(panels, deps.Panels)
+
+	if deps.GetMetadataBreakdown == nil {
+		return panels
+	}
+
+	for i := range panels {
+		if panels[i].EventName == "" || panels[i].GroupBy == "" {
+			continue
+		}
+		rows, err := deps.GetMetadataBreakdown.Execute(ctx, usecase.GetMetadataBreakdownInput{
+			ProjectID:   projectID,
+			Type:        domain.EventTypeCustom,
+			EventName:   panels[i].EventName,
+			MetadataKey: panels[i].GroupBy,
+			Since:       since,
+			Until:       until,
+		})
+		if err == nil {
+			panels[i].Rows = rows
+		}
+	}
+	return panels
 }
 
 func parseRangeDays(r *http.Request) int {

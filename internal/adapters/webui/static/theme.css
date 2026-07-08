@@ -122,6 +122,12 @@ select:focus-visible {
 }
 .button:hover { text-decoration: none; opacity: 0.9; }
 
+.link-button.danger { color: var(--error); }
+.link-button.danger:hover { color: var(--error); opacity: 0.8; }
+.button.danger { background: var(--error); color: #2a0a0a; }
+
+.row-actions { display: flex; gap: 16px; align-items: center; }
+
 /* ---------- Layout ---------- */
 
 main { padding: 24px; max-width: 1100px; margin: 0 auto; }

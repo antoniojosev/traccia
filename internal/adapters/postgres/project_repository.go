@@ -44,6 +44,15 @@ func (r *ProjectRepository) scanOne(ctx context.Context, query, arg string) (dom
 	return p, err
 }
 
+// Delete cascades to that project's events and visitors via the foreign
+// keys' ON DELETE CASCADE — deleting a project deletes everything it ever
+// recorded, irreversibly. (plugin_kv is scoped by plugin name, not
+// project, so it's untouched.)
+func (r *ProjectRepository) Delete(ctx context.Context, id string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM projects WHERE id = $1`, id)
+	return err
+}
+
 func (r *ProjectRepository) List(ctx context.Context) ([]domain.Project, error) {
 	rows, err := r.pool.Query(ctx, `SELECT id, name, domain, api_key_hash, created_at FROM projects ORDER BY created_at DESC`)
 	if err != nil {

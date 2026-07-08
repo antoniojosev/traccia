@@ -15,6 +15,11 @@ type EventRepository interface {
 	// dashboard's "calculator_used" panel showing the last N occurrences
 	// with their full metadata, which a grouped aggregate can't express.
 	RecentByName(ctx context.Context, filter domain.StatsFilter, eventType domain.EventType, name string, limit int) ([]domain.EventDetail, error)
+	// MetadataBreakdown groups a single event name's occurrences by one
+	// metadata key's value — e.g. "calculator_used" events grouped by
+	// their "from_currency" value. This is what a plugin's registerPanel
+	// groupBy actually computes.
+	MetadataBreakdown(ctx context.Context, filter domain.StatsFilter, eventType domain.EventType, eventName, metadataKey string, limit int) ([]domain.NameCount, error)
 }
 
 // ProjectRepository manages tenants and their API keys.
@@ -23,6 +28,7 @@ type ProjectRepository interface {
 	FindByID(ctx context.Context, id string) (domain.Project, error)
 	FindByAPIKeyHash(ctx context.Context, apiKeyHash string) (domain.Project, error)
 	List(ctx context.Context) ([]domain.Project, error)
+	Delete(ctx context.Context, id string) error
 }
 
 // VisitorRepository stores the durable identity set via Identify, keyed by
@@ -58,6 +64,7 @@ type AdminUserRepository interface {
 	Create(ctx context.Context, user domain.AdminUser) error
 	FindByUsername(ctx context.Context, username string) (domain.AdminUser, error)
 	Count(ctx context.Context) (int, error)
+	List(ctx context.Context) ([]domain.AdminUser, error)
 }
 
 // PasswordHasher hashes and verifies human passwords. Deliberately a

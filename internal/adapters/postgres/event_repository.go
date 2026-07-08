@@ -195,6 +195,41 @@ func (r *EventRepository) RecentByName(ctx context.Context, filter domain.StatsF
 	return out, rows.Err()
 }
 
+// MetadataBreakdown groups a single event name's occurrences by one
+// metadata key's value — e.g. "calculator_used" events grouped by their
+// "from_currency" value. Events missing that key entirely are excluded
+// (the `metadata ? $5` "key exists" check) rather than lumped into a
+// null/empty bucket.
+func (r *EventRepository) MetadataBreakdown(ctx context.Context, filter domain.StatsFilter, eventType domain.EventType, eventName, metadataKey string, limit int) ([]domain.NameCount, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT metadata->>$5 AS value, COUNT(*) AS c
+		FROM events e
+		WHERE e.project_id = $1 AND e.created_at >= $2 AND e.created_at < $3
+			AND e.event_type = $4 AND e.event_name = $6
+			AND metadata ? $5
+		GROUP BY value
+		ORDER BY c DESC
+		LIMIT $7
+	`, filter.ProjectID, filter.Since, filter.Until, string(eventType), metadataKey, eventName, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.NameCount
+	for rows.Next() {
+		var nc domain.NameCount
+		if err := rows.Scan(&nc.Name, &nc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, nc)
+	}
+	return out, rows.Err()
+}
+
 func (r *EventRepository) topPaths(ctx context.Context, f domain.StatsFilter, exclude string) ([]domain.PathCount, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT path, COUNT(*) AS c

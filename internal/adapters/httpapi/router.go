@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 
 	traccia "github.com/antoniojosev/traccia"
+	"github.com/antoniojosev/traccia/internal/adapters/ratelimit"
 	"github.com/antoniojosev/traccia/internal/usecase"
 )
 
@@ -14,7 +16,12 @@ type Deps struct {
 	TrackEvent      *usecase.TrackEvent
 	IdentifyVisitor *usecase.IdentifyVisitor
 	GetStats        *usecase.GetStats
-	RateLimiter     *RateLimiter
+	RateLimiter     *ratelimit.Limiter
+	// Ping reports whether the database is actually reachable. /healthz
+	// calls it directly rather than through a usecase — this is an
+	// operational check, not a business rule, and pgxpool connects lazily
+	// so "the process is up" alone doesn't mean Postgres is too.
+	Ping func(ctx context.Context) error
 }
 
 func NewRouter(deps Deps) http.Handler {
@@ -34,6 +41,12 @@ func NewRouter(deps Deps) http.Handler {
 	mux.HandleFunc("OPTIONS /api/v1/stats", corsPreflight)
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		if deps.Ping != nil {
+			if err := deps.Ping(r.Context()); err != nil {
+				http.Error(w, "database unreachable: "+err.Error(), http.StatusServiceUnavailable)
+				return
+			}
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -66,4 +79,14 @@ func setCORSHeaders(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Api-Key")
+}
+
+func withRateLimit(rl *ratelimit.Limiter, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !rl.Allow(ratelimit.ClientIP(r)) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		next(w, r)
+	}
 }

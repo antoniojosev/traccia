@@ -8,10 +8,12 @@
 package admin
 
 import (
+	"context"
 	"errors"
 	"html/template"
 	"net/http"
 
+	"github.com/antoniojosev/traccia/internal/adapters/ratelimit"
 	"github.com/antoniojosev/traccia/internal/adapters/session"
 	"github.com/antoniojosev/traccia/internal/usecase"
 )
@@ -24,11 +26,17 @@ type Deps struct {
 	CreateProject         *usecase.CreateProject
 	ListProjects          *usecase.ListProjects
 	GetProject            *usecase.GetProject
+	DeleteProject         *usecase.DeleteProject
+	AddAdminUser          *usecase.AddAdminUser
+	ListAdminUsers        *usecase.ListAdminUsers
 	// DashboardSessions mints a dashboard login session directly — an
 	// admin account already carries more trust than any single project's
 	// API key (which this panel never handles in plaintext anyway), so
 	// "view this project's dashboard" doesn't require re-entering it.
 	DashboardSessions *session.Manager
+	// LoginLimiter guards /admin/login (brute-forcing a password) and
+	// /admin/setup (spamming bcrypt hashing / account creation attempts).
+	LoginLimiter *ratelimit.Limiter
 }
 
 func NewHandler(deps Deps) http.Handler {
@@ -36,16 +44,30 @@ func NewHandler(deps Deps) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /admin/setup", handleSetupPage(deps, tmpl))
-	mux.HandleFunc("POST /admin/setup", handleSetupSubmit(deps, tmpl))
+	mux.HandleFunc("POST /admin/setup", withLoginRateLimit(deps.LoginLimiter, handleSetupSubmit(deps, tmpl)))
 	mux.HandleFunc("GET /admin/login", handleLoginPage(deps, tmpl))
-	mux.HandleFunc("POST /admin/login", handleLoginSubmit(deps, tmpl))
+	mux.HandleFunc("POST /admin/login", withLoginRateLimit(deps.LoginLimiter, handleLoginSubmit(deps, tmpl)))
 	mux.HandleFunc("POST /admin/logout", handleLogout(deps))
 	mux.HandleFunc("GET /admin", requireAdminSession(deps, handleProjectsList(deps, tmpl)))
 	mux.HandleFunc("GET /admin/projects/new", requireAdminSession(deps, handleNewProjectPage(tmpl)))
 	mux.HandleFunc("POST /admin/projects/new", requireAdminSession(deps, handleNewProjectSubmit(deps, tmpl)))
 	mux.HandleFunc("POST /admin/projects/{id}/view", requireAdminSession(deps, handleViewProject(deps)))
+	mux.HandleFunc("GET /admin/projects/{id}/delete", requireAdminSession(deps, handleDeleteConfirm(deps, tmpl)))
+	mux.HandleFunc("POST /admin/projects/{id}/delete", requireAdminSession(deps, handleDeleteSubmit(deps)))
+	mux.HandleFunc("GET /admin/users", requireAdminSession(deps, handleUsersList(deps, tmpl)))
+	mux.HandleFunc("POST /admin/users/new", requireAdminSession(deps, handleAddUserSubmit(deps, tmpl)))
 
 	return mux
+}
+
+func withLoginRateLimit(rl *ratelimit.Limiter, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !rl.Allow(ratelimit.ClientIP(r)) {
+			http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
+			return
+		}
+		next(w, r)
+	}
 }
 
 // requireAdminSession redirects to /admin/setup before /admin/login when
@@ -175,6 +197,13 @@ func handleLogout(deps Deps) http.HandlerFunc {
 	}
 }
 
+// nav carries which top-level section is active, so the shared "nav"
+// template can mark the right link with aria-current — every view struct
+// that renders {{template "nav" .}} embeds this.
+type nav struct {
+	Active string
+}
+
 type projectView struct {
 	ID        string
 	Name      string
@@ -183,6 +212,7 @@ type projectView struct {
 }
 
 type projectsListView struct {
+	nav
 	Projects []projectView
 }
 
@@ -204,21 +234,23 @@ func handleProjectsList(deps Deps, tmpl *template.Template) http.HandlerFunc {
 			})
 		}
 
-		tmpl.ExecuteTemplate(w, "admin-projects-page", projectsListView{Projects: views})
+		tmpl.ExecuteTemplate(w, "admin-projects-page", projectsListView{nav: nav{Active: "proyectos"}, Projects: views})
 	}
 }
 
 type newProjectView struct {
+	nav
 	Error string
 }
 
 func handleNewProjectPage(tmpl *template.Template) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tmpl.ExecuteTemplate(w, "admin-new-project-page", newProjectView{})
+		tmpl.ExecuteTemplate(w, "admin-new-project-page", newProjectView{nav: nav{Active: "proyectos"}})
 	}
 }
 
 type projectCreatedView struct {
+	nav
 	ProjectID string
 	APIKey    string
 }
@@ -233,7 +265,7 @@ func handleNewProjectSubmit(deps Deps, tmpl *template.Template) http.HandlerFunc
 		name := r.FormValue("name")
 		if name == "" {
 			w.WriteHeader(http.StatusBadRequest)
-			tmpl.ExecuteTemplate(w, "admin-new-project-page", newProjectView{Error: "El nombre es obligatorio."})
+			tmpl.ExecuteTemplate(w, "admin-new-project-page", newProjectView{nav: nav{Active: "proyectos"}, Error: "El nombre es obligatorio."})
 			return
 		}
 
@@ -244,6 +276,7 @@ func handleNewProjectSubmit(deps Deps, tmpl *template.Template) http.HandlerFunc
 		}
 
 		tmpl.ExecuteTemplate(w, "admin-project-created-page", projectCreatedView{
+			nav:       nav{Active: "proyectos"},
 			ProjectID: project.ID,
 			APIKey:    apiKey,
 		})
@@ -260,5 +293,93 @@ func handleViewProject(deps Deps) http.HandlerFunc {
 
 		deps.DashboardSessions.SetCookie(w, id)
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	}
+}
+
+type deleteConfirmView struct {
+	nav
+	ID   string
+	Name string
+}
+
+func handleDeleteConfirm(deps Deps, tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		project, err := deps.GetProject.Execute(r.Context(), id)
+		if err != nil {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+
+		tmpl.ExecuteTemplate(w, "admin-delete-confirm-page", deleteConfirmView{nav: nav{Active: "proyectos"}, ID: project.ID, Name: project.Name})
+	}
+}
+
+func handleDeleteSubmit(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if _, err := deps.GetProject.Execute(r.Context(), id); err != nil {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+		if err := deps.DeleteProject.Execute(r.Context(), id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	}
+}
+
+type adminUserView struct {
+	Username  string
+	CreatedAt string
+}
+
+type usersListView struct {
+	nav
+	Users    []adminUserView
+	Error    string
+	Username string
+}
+
+func handleUsersList(deps Deps, tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		renderUsersList(r.Context(), w, tmpl, deps, usersListView{nav: nav{Active: "usuarios"}}, http.StatusOK)
+	}
+}
+
+func renderUsersList(ctx context.Context, w http.ResponseWriter, tmpl *template.Template, deps Deps, view usersListView, status int) {
+	users, err := deps.ListAdminUsers.Execute(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	for _, u := range users {
+		view.Users = append(view.Users, adminUserView{Username: u.Username, CreatedAt: u.CreatedAt.Format("2006-01-02 15:04")})
+	}
+	w.WriteHeader(status)
+	tmpl.ExecuteTemplate(w, "admin-users-page", view)
+}
+
+func handleAddUserSubmit(deps Deps, tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		username := r.FormValue("username")
+
+		if _, err := deps.AddAdminUser.Execute(r.Context(), username, r.FormValue("password")); err != nil {
+			message := "El usuario debe tener al menos 3 caracteres y la contraseña al menos 8."
+			if errors.Is(err, usecase.ErrAdminUsernameTaken) {
+				message = "Ese usuario ya existe."
+			}
+			renderUsersList(r.Context(), w, tmpl, deps, usersListView{
+				nav: nav{Active: "usuarios"}, Error: message, Username: username,
+			}, http.StatusBadRequest)
+			return
+		}
+
+		http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 	}
 }

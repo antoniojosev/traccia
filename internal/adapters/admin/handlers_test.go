@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/antoniojosev/traccia/internal/adapters/admin"
+	"github.com/antoniojosev/traccia/internal/adapters/ratelimit"
 	"github.com/antoniojosev/traccia/internal/adapters/session"
 	"github.com/antoniojosev/traccia/internal/usecase"
 )
@@ -19,6 +20,10 @@ const (
 )
 
 func newTestHandler(t *testing.T) (http.Handler, *fakeProjectRepo, *fakeAdminUserRepo, *session.Manager) {
+	return newTestHandlerWithLoginLimit(t, 1000)
+}
+
+func newTestHandlerWithLoginLimit(t *testing.T, loginRateLimitPerMinute int) (http.Handler, *fakeProjectRepo, *fakeAdminUserRepo, *session.Manager) {
 	t.Helper()
 	projects := newFakeProjectRepo()
 	adminUsers := newFakeAdminUserRepo()
@@ -32,7 +37,11 @@ func newTestHandler(t *testing.T) (http.Handler, *fakeProjectRepo, *fakeAdminUse
 		CreateProject:         usecase.NewCreateProject(projects, fakeKeyHasher{}),
 		ListProjects:          usecase.NewListProjects(projects),
 		GetProject:            usecase.NewGetProject(projects),
+		DeleteProject:         usecase.NewDeleteProject(projects),
+		AddAdminUser:          usecase.NewAddAdminUser(adminUsers, fakePasswordHasher{}),
+		ListAdminUsers:        usecase.NewListAdminUsers(adminUsers),
 		DashboardSessions:     dashboardSessions,
+		LoginLimiter:          ratelimit.New(loginRateLimitPerMinute),
 	})
 
 	return handler, projects, adminUsers, dashboardSessions
@@ -336,5 +345,198 @@ func TestAdmin_LogoutClearsSessionCookie(t *testing.T) {
 	cookies := rec.Result().Cookies()
 	if len(cookies) == 0 || cookies[0].MaxAge >= 0 {
 		t.Errorf("expected logout to clear the session cookie, got %+v", cookies)
+	}
+}
+
+func TestAdmin_LoginIsRateLimitedPerIP(t *testing.T) {
+	handler, _, adminUsers, _ := newTestHandlerWithLoginLimit(t, 1) // burst of 1
+	seedAdminUser(t, adminUsers)
+
+	form := url.Values{"username": {testUsername}, "password": {"wrong-password"}}
+	newReq := func() *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = "203.0.113.5:1234"
+		return req
+	}
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, newReq())
+	if first.Code != http.StatusUnauthorized {
+		t.Fatalf("expected first attempt to reach the handler (401 for wrong password), got %d", first.Code)
+	}
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, newReq())
+	if second.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected second attempt to be rate limited with 429, got %d", second.Code)
+	}
+}
+
+func TestAdmin_SetupIsRateLimitedPerIP(t *testing.T) {
+	handler, _, _, _ := newTestHandlerWithLoginLimit(t, 1) // burst of 1
+
+	form := url.Values{"username": {"a"}, "password": {"short"}, "password_confirm": {"short"}}
+	newReq := func() *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/admin/setup", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = "203.0.113.6:1234"
+		return req
+	}
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, newReq())
+	if first.Code != http.StatusBadRequest {
+		t.Fatalf("expected first attempt to reach the handler (400 for invalid input), got %d", first.Code)
+	}
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, newReq())
+	if second.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected second attempt to be rate limited with 429, got %d", second.Code)
+	}
+}
+
+func TestAdmin_DeleteConfirmPageShowsProjectName(t *testing.T) {
+	handler, projects, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	create := usecase.NewCreateProject(projects, fakeKeyHasher{})
+	created, _, err := create.Execute(context.Background(), "Doomed Site", "example.com")
+	if err != nil {
+		t.Fatalf("seeding project: %v", err)
+	}
+
+	cookie := adminLoginCookie(t, handler)
+	req := httptest.NewRequest(http.MethodGet, "/admin/projects/"+created.ID+"/delete", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Doomed Site") {
+		t.Errorf("expected project name on confirmation page, got: %s", rec.Body.String())
+	}
+}
+
+func TestAdmin_DeleteConfirmRejectsUnknownID(t *testing.T) {
+	handler, _, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	cookie := adminLoginCookie(t, handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/projects/does-not-exist/delete", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestAdmin_DeleteSubmitRemovesProjectAndRedirects(t *testing.T) {
+	handler, projects, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	create := usecase.NewCreateProject(projects, fakeKeyHasher{})
+	created, _, err := create.Execute(context.Background(), "Doomed Site", "example.com")
+	if err != nil {
+		t.Fatalf("seeding project: %v", err)
+	}
+
+	cookie := adminLoginCookie(t, handler)
+	req := httptest.NewRequest(http.MethodPost, "/admin/projects/"+created.ID+"/delete", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/admin" {
+		t.Fatalf("expected redirect to /admin, got %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	list, err := projects.List(context.Background())
+	if err != nil {
+		t.Fatalf("listing projects: %v", err)
+	}
+	if len(list) != 0 {
+		t.Errorf("expected the project to be gone after delete, got %+v", list)
+	}
+}
+
+func TestAdmin_DeleteSubmitRejectsUnknownID(t *testing.T) {
+	handler, _, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	cookie := adminLoginCookie(t, handler)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/projects/does-not-exist/delete", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestAdmin_UsersListShowsExistingAccounts(t *testing.T) {
+	handler, _, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	cookie := adminLoginCookie(t, handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), testUsername) {
+		t.Errorf("expected existing username in list, got: %s", rec.Body.String())
+	}
+}
+
+func TestAdmin_AddUserCreatesSecondAccount(t *testing.T) {
+	handler, _, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	cookie := adminLoginCookie(t, handler)
+
+	form := url.Values{"username": {"teammate"}, "password": {"another-long-password"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/admin/users" {
+		t.Fatalf("expected redirect to /admin/users, got %d %q: %s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+
+	list, err := adminUsers.List(context.Background())
+	if err != nil {
+		t.Fatalf("listing admin users: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 admin users, got %d", len(list))
+	}
+}
+
+func TestAdmin_AddUserRejectsDuplicateUsername(t *testing.T) {
+	handler, _, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	cookie := adminLoginCookie(t, handler)
+
+	form := url.Values{"username": {testUsername}, "password": {"another-long-password"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "ya existe") {
+		t.Errorf("expected duplicate-username error message, got: %s", rec.Body.String())
 	}
 }

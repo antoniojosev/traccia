@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/antoniojosev/traccia/internal/adapters/dashboard"
+	"github.com/antoniojosev/traccia/internal/adapters/ratelimit"
 	"github.com/antoniojosev/traccia/internal/adapters/session"
+	"github.com/antoniojosev/traccia/internal/domain"
 	"github.com/antoniojosev/traccia/internal/usecase"
 )
 
@@ -18,6 +20,10 @@ func newTestHandler(t *testing.T) (http.Handler, string /* apiKey */) {
 }
 
 func newTestHandlerWithPanels(t *testing.T, panels []dashboard.PanelView) (http.Handler, string /* apiKey */) {
+	return newTestHandlerWithLoginLimit(t, panels, 1000)
+}
+
+func newTestHandlerWithLoginLimit(t *testing.T, panels []dashboard.PanelView, loginRateLimitPerMinute int) (http.Handler, string /* apiKey */) {
 	t.Helper()
 	projects := newFakeProjectRepo()
 	events := &fakeEventRepo{}
@@ -29,11 +35,13 @@ func newTestHandlerWithPanels(t *testing.T, panels []dashboard.PanelView) (http.
 	}
 
 	handler := dashboard.NewHandler(dashboard.Deps{
-		Auth:       usecase.NewAuthenticateProject(projects, fakeKeyHasher{}),
-		GetStats:   usecase.NewGetStats(events),
-		GetSamples: usecase.NewGetEventSamples(events),
-		Sessions:   session.New("test-secret", "traccia_session", "/dashboard"),
-		Panels:     panels,
+		Auth:                 usecase.NewAuthenticateProject(projects, fakeKeyHasher{}),
+		GetStats:             usecase.NewGetStats(events),
+		GetSamples:           usecase.NewGetEventSamples(events),
+		GetMetadataBreakdown: usecase.NewGetMetadataBreakdown(events),
+		Sessions:             session.New("test-secret", "traccia_session", "/dashboard"),
+		LoginLimiter:         ratelimit.New(loginRateLimitPerMinute),
+		Panels:               panels,
 	})
 
 	return handler, apiKey
@@ -199,6 +207,43 @@ func TestDashboard_RendersPluginPanels(t *testing.T) {
 	}
 }
 
+func TestDashboard_PluginPanelWithGroupByRendersComputedRows(t *testing.T) {
+	projects := newFakeProjectRepo()
+	events := &fakeEventRepo{}
+	events.metadataBreakdown = []domain.NameCount{{Name: "USD", Count: 42}}
+
+	create := usecase.NewCreateProject(projects, fakeKeyHasher{})
+	_, apiKey, err := create.Execute(context.Background(), "Test Site", "example.com")
+	if err != nil {
+		t.Fatalf("creating test project: %v", err)
+	}
+
+	handler := dashboard.NewHandler(dashboard.Deps{
+		Auth:                 usecase.NewAuthenticateProject(projects, fakeKeyHasher{}),
+		GetStats:             usecase.NewGetStats(events),
+		GetSamples:           usecase.NewGetEventSamples(events),
+		GetMetadataBreakdown: usecase.NewGetMetadataBreakdown(events),
+		Sessions:             session.New("test-secret", "traccia_session", "/dashboard"),
+		LoginLimiter:         ratelimit.New(1000),
+		Panels: []dashboard.PanelView{
+			{Title: "Calculator usage", Kind: "table", EventName: "calculator_used", GroupBy: "from_currency"},
+		},
+	})
+
+	cookie := loginAndGetCookie(t, handler, apiKey)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "USD") || !strings.Contains(rec.Body.String(), "42") {
+		t.Errorf("expected computed breakdown row (USD, 42) in output, got: %s", rec.Body.String())
+	}
+}
+
 func TestDashboard_ServesStaticAssets(t *testing.T) {
 	handler, _ := newTestHandler(t)
 
@@ -211,5 +256,29 @@ func TestDashboard_ServesStaticAssets(t *testing.T) {
 	}
 	if rec.Body.Len() == 0 {
 		t.Error("expected non-empty CSS body")
+	}
+}
+
+func TestDashboard_LoginIsRateLimitedPerIP(t *testing.T) {
+	handler, _ := newTestHandlerWithLoginLimit(t, nil, 1) // burst of 1
+
+	form := url.Values{"api_key": {"wrong-key"}}
+	newReq := func() *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/dashboard/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = "203.0.113.5:1234"
+		return req
+	}
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, newReq())
+	if first.Code != http.StatusUnauthorized {
+		t.Fatalf("expected first attempt to reach the handler (401 for wrong key), got %d", first.Code)
+	}
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, newReq())
+	if second.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected second attempt to be rate limited with 429, got %d", second.Code)
 	}
 }

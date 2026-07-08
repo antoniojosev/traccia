@@ -15,10 +15,12 @@ import (
 	"github.com/antoniojosev/traccia/internal/adapters/password"
 	"github.com/antoniojosev/traccia/internal/adapters/plugins"
 	"github.com/antoniojosev/traccia/internal/adapters/postgres"
+	"github.com/antoniojosev/traccia/internal/adapters/ratelimit"
 	"github.com/antoniojosev/traccia/internal/adapters/session"
 	"github.com/antoniojosev/traccia/internal/adapters/useragent"
 	"github.com/antoniojosev/traccia/internal/adapters/webui"
 	"github.com/antoniojosev/traccia/internal/config"
+	"github.com/antoniojosev/traccia/internal/ports"
 	"github.com/antoniojosev/traccia/internal/usecase"
 )
 
@@ -48,7 +50,7 @@ func main() {
 	projects := postgres.NewProjectRepository(pool)
 	visitors := postgres.NewVisitorRepository(pool)
 	uaParser := useragent.NewHeuristicParser()
-	geoResolver := geoip.NewNoopResolver()
+	geoResolver := loadGeoResolver(cfg.GeoIPDatabasePath)
 	keyHasher := apikey.NewSHA256Hasher()
 	pluginKV := postgres.NewPluginKVRepository(pool)
 	adminUsers := postgres.NewAdminUserRepository(pool)
@@ -74,16 +76,19 @@ func main() {
 		TrackEvent:      usecase.NewTrackEvent(events, uaParser, geoResolver),
 		IdentifyVisitor: usecase.NewIdentifyVisitor(visitors),
 		GetStats:        getStats,
-		RateLimiter:     httpapi.NewRateLimiter(cfg.RateLimitPerMinute),
+		RateLimiter:     ratelimit.New(cfg.RateLimitPerMinute),
+		Ping:            pool.Ping,
 	})
 
 	dashboardSessions := session.New(cfg.SessionSecret, "traccia_session", "/dashboard")
 	dashboardHandler := dashboard.NewHandler(dashboard.Deps{
-		Auth:       auth,
-		GetStats:   getStats,
-		GetSamples: usecase.NewGetEventSamples(events),
-		Sessions:   dashboardSessions,
-		Panels:     dashboardPanels(pluginManager),
+		Auth:                 auth,
+		GetStats:             getStats,
+		GetSamples:           usecase.NewGetEventSamples(events),
+		GetMetadataBreakdown: usecase.NewGetMetadataBreakdown(events),
+		Sessions:             dashboardSessions,
+		LoginLimiter:         ratelimit.New(cfg.LoginRateLimitPerMinute),
+		Panels:               dashboardPanels(pluginManager),
 	})
 
 	adminHandler := admin.NewHandler(admin.Deps{
@@ -94,7 +99,11 @@ func main() {
 		CreateProject:         usecase.NewCreateProject(projects, keyHasher),
 		ListProjects:          usecase.NewListProjects(projects),
 		GetProject:            usecase.NewGetProject(projects),
+		DeleteProject:         usecase.NewDeleteProject(projects),
+		AddAdminUser:          usecase.NewAddAdminUser(adminUsers, passwordHasher),
+		ListAdminUsers:        usecase.NewListAdminUsers(adminUsers),
 		DashboardSessions:     dashboardSessions,
+		LoginLimiter:          ratelimit.New(cfg.LoginRateLimitPerMinute),
 	})
 
 	// Each embedded panel's own mux has entries for both its exact root
@@ -114,6 +123,23 @@ func main() {
 	}
 }
 
+// loadGeoResolver returns a MaxMind-backed resolver if GEOIP_DB_PATH is
+// set and the file opens cleanly, otherwise the no-op default. A bad path
+// is a warning, not a fatal error — GeoIP is a nice-to-have, not something
+// worth refusing to boot over.
+func loadGeoResolver(dbPath string) ports.GeoResolver {
+	if dbPath == "" {
+		return geoip.NewNoopResolver()
+	}
+	resolver, err := geoip.NewMaxMindResolver(dbPath)
+	if err != nil {
+		log.Printf("warning: could not open GeoIP database at %s: %v — country/city will stay unresolved", dbPath, err)
+		return geoip.NewNoopResolver()
+	}
+	log.Printf("resolving GeoIP from %s", dbPath)
+	return resolver
+}
+
 func deriveSessionSecret(adminToken string) string {
 	sum := sha256.Sum256([]byte("traccia-session-fallback:" + adminToken))
 	return hex.EncodeToString(sum[:])
@@ -123,7 +149,12 @@ func dashboardPanels(manager *plugins.Manager) []dashboard.PanelView {
 	panels := manager.Panels()
 	views := make([]dashboard.PanelView, 0, len(panels))
 	for _, p := range panels {
-		views = append(views, dashboard.PanelView{Title: p.Title, Kind: p.Chart})
+		views = append(views, dashboard.PanelView{
+			Title:     p.Title,
+			Kind:      p.Chart,
+			EventName: p.EventName,
+			GroupBy:   p.GroupBy,
+		})
 	}
 	return views
 }

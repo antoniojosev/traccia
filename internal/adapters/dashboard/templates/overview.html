@@ -81,7 +81,13 @@
   {{range .Panels}}
   <section>
     <h2>{{.Title}}</h2>
-    <p class="muted">Panel de plugin — {{.Kind}}</p>
+    {{if .Rows}}
+    <table><tbody>
+      {{range .Rows}}<tr><td>{{.Name}}</td><td>{{.Count}}</td></tr>{{end}}
+    </tbody></table>
+    {{else}}
+    <p class="muted">Sin datos para "{{.EventName}}" agrupado por "{{.GroupBy}}" en este rango.</p>
+    {{end}}
   </section>
   {{end}}
 </div>

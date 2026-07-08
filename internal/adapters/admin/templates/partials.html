@@ -16,7 +16,8 @@
   <div class="topbar-left">
     <span class="brand">Traccia</span>
     <nav aria-label="Principal">
-      <a href="/admin" aria-current="page">Proyectos</a>
+      <a href="/admin" {{if eq .Active "proyectos"}}aria-current="page"{{end}}>Proyectos</a>
+      <a href="/admin/users" {{if eq .Active "usuarios"}}aria-current="page"{{end}}>Usuarios</a>
     </nav>
   </div>
   <div class="topbar-actions">

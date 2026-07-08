@@ -48,6 +48,20 @@ func (f *fakeProjectRepo) List(_ context.Context) ([]domain.Project, error) {
 	return out, nil
 }
 
+func (f *fakeProjectRepo) Delete(_ context.Context, id string) error {
+	if p, ok := f.byID[id]; ok {
+		delete(f.byHash, p.APIKeyHash)
+	}
+	delete(f.byID, id)
+	for i, oid := range f.order {
+		if oid == id {
+			f.order = append(f.order[:i], f.order[i+1:]...)
+			break
+		}
+	}
+	return nil
+}
+
 type fakeKeyHasher struct{}
 
 func (fakeKeyHasher) Generate() (plainKey string, hash string, err error) {
@@ -60,6 +74,7 @@ func (fakeKeyHasher) Hash(plainKey string) string {
 
 type fakeAdminUserRepo struct {
 	byUsername map[string]domain.AdminUser
+	order      []string
 }
 
 func newFakeAdminUserRepo() *fakeAdminUserRepo {
@@ -68,6 +83,7 @@ func newFakeAdminUserRepo() *fakeAdminUserRepo {
 
 func (f *fakeAdminUserRepo) Create(_ context.Context, user domain.AdminUser) error {
 	f.byUsername[user.Username] = user
+	f.order = append(f.order, user.Username)
 	return nil
 }
 
@@ -81,6 +97,14 @@ func (f *fakeAdminUserRepo) FindByUsername(_ context.Context, username string) (
 
 func (f *fakeAdminUserRepo) Count(_ context.Context) (int, error) {
 	return len(f.byUsername), nil
+}
+
+func (f *fakeAdminUserRepo) List(_ context.Context) ([]domain.AdminUser, error) {
+	out := make([]domain.AdminUser, 0, len(f.order))
+	for _, username := range f.order {
+		out = append(out, f.byUsername[username])
+	}
+	return out, nil
 }
 
 type fakePasswordHasher struct{}

@@ -9,8 +9,9 @@ import (
 )
 
 type fakeEventRepo struct {
-	saved   []domain.Event
-	samples []domain.EventDetail
+	saved             []domain.Event
+	samples           []domain.EventDetail
+	metadataBreakdown []domain.NameCount
 }
 
 func (f *fakeEventRepo) Save(_ context.Context, event domain.Event) error {
@@ -27,6 +28,10 @@ func (f *fakeEventRepo) Stats(_ context.Context, _ domain.StatsFilter) (domain.S
 
 func (f *fakeEventRepo) RecentByName(_ context.Context, _ domain.StatsFilter, _ domain.EventType, _ string, _ int) ([]domain.EventDetail, error) {
 	return f.samples, nil
+}
+
+func (f *fakeEventRepo) MetadataBreakdown(_ context.Context, _ domain.StatsFilter, _ domain.EventType, _, _ string, _ int) ([]domain.NameCount, error) {
+	return f.metadataBreakdown, nil
 }
 
 type fakeProjectRepo struct {
@@ -52,6 +57,20 @@ func (f *fakeProjectRepo) List(_ context.Context) ([]domain.Project, error) {
 		out = append(out, f.byID[id])
 	}
 	return out, nil
+}
+
+func (f *fakeProjectRepo) Delete(_ context.Context, id string) error {
+	if p, ok := f.byID[id]; ok {
+		delete(f.byHash, p.APIKeyHash)
+	}
+	delete(f.byID, id)
+	for i, oid := range f.order {
+		if oid == id {
+			f.order = append(f.order[:i], f.order[i+1:]...)
+			break
+		}
+	}
+	return nil
 }
 
 func (f *fakeProjectRepo) FindByID(_ context.Context, id string) (domain.Project, error) {

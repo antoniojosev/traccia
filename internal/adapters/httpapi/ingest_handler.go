@@ -3,8 +3,8 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
+	"github.com/antoniojosev/traccia/internal/adapters/ratelimit"
 	"github.com/antoniojosev/traccia/internal/domain"
 	"github.com/antoniojosev/traccia/internal/usecase"
 )
@@ -42,7 +42,7 @@ func HandleTrack(track *usecase.TrackEvent) http.HandlerFunc {
 			Name:      req.Name,
 			Path:      req.Path,
 			Referrer:  req.Referrer,
-			IP:        clientIP(r),
+			IP:        ratelimit.ClientIP(r),
 			UserAgent: r.UserAgent(),
 			Metadata:  req.Metadata,
 		})
@@ -84,18 +84,4 @@ func HandleIdentify(identify *usecase.IdentifyVisitor) http.HandlerFunc {
 
 		w.WriteHeader(http.StatusAccepted)
 	}
-}
-
-// clientIP trusts X-Forwarded-For only because Traccia is expected to run
-// behind a reverse proxy you control (Caddy/nginx/Dokploy) that sets it —
-// if you expose the app directly to the internet, this header is spoofable.
-func clientIP(r *http.Request) string {
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		return strings.TrimSpace(strings.Split(fwd, ",")[0])
-	}
-	host := r.RemoteAddr
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		return host[:idx]
-	}
-	return host
 }

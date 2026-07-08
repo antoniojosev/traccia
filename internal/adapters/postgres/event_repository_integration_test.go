@@ -241,3 +241,44 @@ func TestEventRepository_Stats_BreakdownsAndDrilldown(t *testing.T) {
 		t.Errorf("expected both metadata amounts present, got samples %+v", samples)
 	}
 }
+
+func TestEventRepository_MetadataBreakdown(t *testing.T) {
+	pool := setupTestPool(t)
+	ctx := context.Background()
+	projects := postgres.NewProjectRepository(pool)
+	events := postgres.NewEventRepository(pool)
+
+	project := createTestProject(t, ctx, projects)
+	now := time.Now().UTC()
+
+	must := func(metadata map[string]any) {
+		t.Helper()
+		if err := events.Save(ctx, domain.Event{
+			ProjectID: project.ID, VisitorID: uuid.NewString(), Type: domain.EventTypeCustom,
+			Name: "calculator_used", Metadata: metadata, CreatedAt: now,
+		}); err != nil {
+			t.Fatalf("saving event: %v", err)
+		}
+	}
+
+	must(map[string]any{"from_currency": "USD"})
+	must(map[string]any{"from_currency": "USD"})
+	must(map[string]any{"from_currency": "VES"})
+	must(map[string]any{"no_currency_key": true}) // must be excluded, has no from_currency key
+
+	filter := domain.StatsFilter{ProjectID: project.ID, Since: now.Add(-time.Hour), Until: now.Add(time.Hour)}
+	breakdown, err := events.MetadataBreakdown(ctx, filter, domain.EventTypeCustom, "calculator_used", "from_currency", 10)
+	if err != nil {
+		t.Fatalf("querying metadata breakdown: %v", err)
+	}
+
+	if len(breakdown) != 2 {
+		t.Fatalf("expected 2 distinct values (USD, VES), got %+v", breakdown)
+	}
+	if breakdown[0].Name != "USD" || breakdown[0].Count != 2 {
+		t.Errorf("expected USD first with count 2, got %+v", breakdown[0])
+	}
+	if breakdown[1].Name != "VES" || breakdown[1].Count != 1 {
+		t.Errorf("expected VES second with count 1, got %+v", breakdown[1])
+	}
+}

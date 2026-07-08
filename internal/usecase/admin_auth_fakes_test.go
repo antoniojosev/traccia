@@ -32,6 +32,14 @@ func (f *fakeAdminUserRepo) Count(_ context.Context) (int, error) {
 	return len(f.byUsername), nil
 }
 
+func (f *fakeAdminUserRepo) List(_ context.Context) ([]domain.AdminUser, error) {
+	out := make([]domain.AdminUser, 0, len(f.byUsername))
+	for _, u := range f.byUsername {
+		out = append(out, u)
+	}
+	return out, nil
+}
+
 type fakePasswordHasher struct{}
 
 func (fakePasswordHasher) Hash(plain string) (string, error) {

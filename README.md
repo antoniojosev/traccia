@@ -95,12 +95,9 @@ restart except active logins.
 Want to see it with data instead of an empty state? `EVENTS=300 ADMIN_TOKEN=... ./scripts/seed-demo.sh`
 creates a demo project and floods it with a realistic mix of traffic.
 
-**Scoping note**: per-key metadata aggregation (e.g. "average `amount` for
-`calculator_used`") isn't implemented — the drill-down shows raw recent
-events with their metadata instead. Generic JSONB key aggregation is a
-sharper SQL problem than it looks and didn't seem worth the risk without
-being able to verify it against a real database in this environment (see
-the hardening PR). Documented here rather than silently scoped out.
+Login attempts are rate-limited per IP (`LOGIN_RATE_LIMIT_PER_MINUTE`,
+default 10/min) — much stricter than the ingest limit, since this is the
+only thing standing between an API key and someone brute-forcing it.
 
 ## Admin panel
 
@@ -114,10 +111,16 @@ second one.
 
 - **List** every project (name, domain, ID, created date)
 - **Create** a new one, with the same one-time API key reveal as the API
+- **Delete** one, with a confirmation step — irreversibly deletes its
+  events and visitors too (`ON DELETE CASCADE`)
 - **Jump straight into a project's dashboard** with one click, without
   needing that project's API key — the admin panel mints the dashboard
   session directly, since an admin account already implies more trust
   than any single project's key
+- **Add more admin accounts** at `/admin/users`, for a teammate — this is
+  the one place open registration *is* allowed, since it's gated by
+  already having a valid admin session, not by the account being the
+  first one
 
 This account is unrelated to `ADMIN_TOKEN`, which stays exactly what it
 was: the API's machine credential for scripting `POST /api/v1/projects`
@@ -149,9 +152,15 @@ function onEvent(event) {
 // A plugin never ships its own frontend JS; this is why the dashboard is
 // server-rendered HTMX instead of a SPA.
 function registerPanel() {
-  return { title: "Calculator usage", eventName: "calculator_used", chart: "line" };
+  return { title: "Calculator usage", eventName: "calculator_used", chart: "line", groupBy: "from_currency" };
 }
 ```
+
+A panel's `groupBy` is real: the dashboard groups that event name's
+occurrences by that metadata key's value (JSONB `metadata->>'key'`) and
+renders the counts — e.g. how many `calculator_used` events had
+`from_currency: "USD"` vs `"VES"`. Events missing that key are excluded,
+not lumped into an empty bucket.
 
 Full API reference, limitations (a ~100ms time budget per `onEvent` call,
 sequential execution per plugin, why a plugin error keeps the event
@@ -171,9 +180,18 @@ Three trust levels, each gating something different:
 - **`api_key`** (shown once on project creation): gates *reading* that one
   project's aggregated stats. It never appears in client-side code.
 - **Admin account** (username + password, see [Admin panel](#admin-panel)):
-  gates creating/listing *every* project and viewing any of their
+  gates creating/listing/deleting *every* project and viewing any of their
   dashboards — the most privileged tier. Separate from `ADMIN_TOKEN`,
   which is the API's own machine credential and never touches the panel.
+
+`/dashboard/login`, `/admin/login` and `/admin/setup` are all rate-limited
+per IP (`LOGIN_RATE_LIMIT_PER_MINUTE`, default 10/min) — the actual
+defense against brute-forcing a password or API key, since none of these
+secrets are otherwise throttled.
+
+`GET /healthz` checks Postgres connectivity (`pool.Ping`), not just "the
+process is up" — `pgxpool` connects lazily, so without this check the
+server could report healthy before Postgres actually finished booting.
 
 ## Architecture
 
@@ -185,9 +203,15 @@ Postgres or HTTP. Everything they depend on is an interface in
 |---|---|---|
 | `EventRepository` | Postgres | ClickHouse, SQLite |
 | `UserAgentParser` | small heuristic parser | a full regex-database parser |
-| `GeoResolver` | no-op | MaxMind/IP2Location |
+| `GeoResolver` | no-op, or MaxMind if `GEOIP_DB_PATH` is set | IP2Location, a paid geo API |
 | `APIKeyHasher` | SHA-256 | — |
 | `PasswordHasher` | bcrypt | — |
+
+`GeoResolver`'s MaxMind adapter reads a local GeoLite2/GeoIP2 City
+`.mmdb` file — no network calls. The database itself isn't bundled (needs
+a free MaxMind account and its license doesn't permit redistribution):
+download your own and point `GEOIP_DB_PATH` at it. Unset or a bad path
+falls back to the no-op resolver with a warning, never a boot failure.
 
 ```
 cmd/api          entrypoint, wiring
@@ -202,6 +226,7 @@ internal/
     geoip        default (no-op) geo resolver
     apikey       default API key hasher (SHA-256 — high-entropy tokens)
     password     default password hasher (bcrypt — low-entropy human passwords)
+    ratelimit    shared per-IP token bucket (ingest limit + stricter login limit)
     webui        design system shared by dashboard + admin, served at /assets/
     dashboard    embedded HTMX dashboard (templates, static, sessions)
     admin        embedded HTMX admin panel — accounts, projects, jump to dashboard
@@ -218,10 +243,18 @@ plugins-examples reference plugin scripts (not loaded automatically —
 
 ## Roadmap
 
-- MaxMind GeoIP adapter
-- Per-key metadata aggregation for custom events (see the Dashboard
-  section's scoping note), which would also let `registerPanel`'s
-  `groupBy` actually compute something
+- A way to recover admin access if you lose the password — right now that
+  means deleting the row from `admin_users` directly and redoing setup.
+  No email/SMTP exists in this project, so a proper "forgot password"
+  flow is a bigger addition than it sounds; documented here rather than
+  half-built.
+- A project switcher inside the dashboard itself — deliberately not built
+  yet, since the dashboard's trust model (know one project's API key)
+  is intentionally weaker than the admin panel's (know the admin
+  password), and exposing "list of all projects" inside a dashboard
+  session would blur that boundary. Use the admin panel's per-project
+  "Ver dashboard" links to switch instead.
+- CI (GitHub Actions), npm publish for `sdk/js`, a tagged release.
 
 ## License
 

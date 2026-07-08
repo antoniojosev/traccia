@@ -132,11 +132,32 @@ ADMIN_VIEW_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b /tmp/traccia-smoke
 [ "$ADMIN_VIEW_STATUS" = "303" ] || fail "expected 303 from admin's view-dashboard action, got $ADMIN_VIEW_STATUS"
 curl -sf -b /tmp/traccia-smoke-admin-cookies.txt "$BASE_URL/dashboard" | grep -q "Eventos totales" || fail "dashboard did not render after admin's view-dashboard jump"
 curl -sf -b /tmp/traccia-smoke-admin-cookies.txt "$BASE_URL/dashboard" | grep -q 'href="/admin"' || fail "dashboard did not show a link back to the admin panel"
-rm -f /tmp/traccia-smoke-admin-cookies.txt
 pass "admin 'ver dashboard' jump mints a working dashboard session, with a nav link back"
 
 curl -sf -o /dev/null -w '%{http_code}\n' "$BASE_URL/assets/theme.css" | grep -q "200" || fail "/assets/theme.css did not serve the shared stylesheet"
 pass "shared theme asset served at /assets/theme.css"
+
+# --- users management ---
+curl -sf -b /tmp/traccia-smoke-admin-cookies.txt "$BASE_URL/admin/users" | grep -q "$ADMIN_USERNAME" || fail "/admin/users did not list the current account"
+pass "GET /admin/users lists the current account"
+
+ADD_USER_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b /tmp/traccia-smoke-admin-cookies.txt -X POST "$BASE_URL/admin/users/new" \
+  --data-urlencode "username=smoke_teammate" --data-urlencode "password=another-smoke-password")
+[ "$ADD_USER_STATUS" = "303" ] || fail "expected 303 after adding a second admin user, got $ADD_USER_STATUS"
+curl -sf -b /tmp/traccia-smoke-admin-cookies.txt "$BASE_URL/admin/users" | grep -q "smoke_teammate" || fail "second admin account did not appear in the list"
+pass "admin can add a second account"
+
+# --- delete project ---
+DELETE_CONFIRM_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b /tmp/traccia-smoke-admin-cookies.txt "$BASE_URL/admin/projects/$ADMIN_PROJECT_ID/delete")
+[ "$DELETE_CONFIRM_STATUS" = "200" ] || fail "expected 200 on delete confirmation page, got $DELETE_CONFIRM_STATUS"
+DELETE_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b /tmp/traccia-smoke-admin-cookies.txt -X POST "$BASE_URL/admin/projects/$ADMIN_PROJECT_ID/delete")
+[ "$DELETE_STATUS" = "303" ] || fail "expected 303 after deleting a project, got $DELETE_STATUS"
+if curl -sf -b /tmp/traccia-smoke-admin-cookies.txt "$BASE_URL/admin" | grep -q "Admin Panel Smoke"; then
+  fail "deleted project still appears in the list"
+fi
+pass "admin can delete a project and it disappears from the list"
+
+rm -f /tmp/traccia-smoke-admin-cookies.txt
 
 echo
 echo "ALL SMOKE CHECKS PASSED"

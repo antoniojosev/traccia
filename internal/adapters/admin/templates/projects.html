@@ -17,10 +17,11 @@
         <td class="muted">{{.Domain}}</td>
         <td class="mono">{{.ID}}</td>
         <td class="muted">{{.CreatedAt}}</td>
-        <td>
+        <td class="row-actions">
           <form method="post" action="/admin/projects/{{.ID}}/view">
             <button type="submit" class="link-button">Ver dashboard →</button>
           </form>
+          <a href="/admin/projects/{{.ID}}/delete" class="link-button danger">Eliminar</a>
         </td>
       </tr>
       {{else}}
@@ -28,6 +29,20 @@
       {{end}}
     </tbody>
   </table>
+</main>
+{{template "footer" .}}
+{{end}}
+
+{{define "admin-delete-confirm-page"}}
+{{template "header" .}}
+{{template "nav" .}}
+<main class="narrow">
+  <a href="/admin" class="link-button">← Volver a proyectos</a>
+  <h1>Eliminar «{{.Name}}»</h1>
+  <p class="warning">Esto borra el proyecto y TODOS sus eventos y visitantes de forma permanente. No hay vuelta atrás.</p>
+  <form method="post" action="/admin/projects/{{.ID}}/delete">
+    <button type="submit" class="button danger">Sí, eliminar «{{.Name}}» y todos sus datos</button>
+  </form>
 </main>
 {{template "footer" .}}
 {{end}}

@@ -44,3 +44,21 @@ func (r *AdminUserRepository) Count(ctx context.Context) (int, error) {
 	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_users`).Scan(&count)
 	return count, err
 }
+
+func (r *AdminUserRepository) List(ctx context.Context) ([]domain.AdminUser, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id, username, password_hash, created_at FROM admin_users ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.AdminUser
+	for rows.Next() {
+		var u domain.AdminUser
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}

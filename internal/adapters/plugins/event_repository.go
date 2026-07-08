@@ -35,3 +35,7 @@ func (d *EventRepositoryDecorator) Stats(ctx context.Context, filter domain.Stat
 func (d *EventRepositoryDecorator) RecentByName(ctx context.Context, filter domain.StatsFilter, eventType domain.EventType, name string, limit int) ([]domain.EventDetail, error) {
 	return d.inner.RecentByName(ctx, filter, eventType, name, limit)
 }
+
+func (d *EventRepositoryDecorator) MetadataBreakdown(ctx context.Context, filter domain.StatsFilter, eventType domain.EventType, eventName, metadataKey string, limit int) ([]domain.NameCount, error) {
+	return d.inner.MetadataBreakdown(ctx, filter, eventType, eventName, metadataKey, limit)
+}

@@ -1,0 +1,29 @@
+{{define "admin-users-page"}}
+{{template "header" .}}
+{{template "nav" .}}
+<main class="narrow">
+  <a href="/admin" class="link-button">← Volver a proyectos</a>
+  <h1>Usuarios admin</h1>
+  <table>
+    <thead><tr><th scope="col">Usuario</th><th scope="col">Creado</th></tr></thead>
+    <tbody>
+      {{range .Users}}
+      <tr><td>{{.Username}}</td><td class="muted">{{.CreatedAt}}</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+
+  <h2>Agregar usuario</h2>
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+  <form method="post" action="/admin/users/new">
+    <label for="username">Usuario
+      <input id="username" type="text" name="username" value="{{.Username}}" autocomplete="off" spellcheck="false" required minlength="3">
+    </label>
+    <label for="password">Contraseña
+      <input id="password" type="password" name="password" autocomplete="new-password" required minlength="8">
+    </label>
+    <button type="submit">Crear usuario</button>
+  </form>
+</main>
+{{template "footer" .}}
+{{end}}

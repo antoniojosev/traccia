@@ -24,6 +24,10 @@ func (f *fakeEventRepo) RecentByName(_ context.Context, _ domain.StatsFilter, _ 
 	return nil, nil
 }
 
+func (f *fakeEventRepo) MetadataBreakdown(_ context.Context, _ domain.StatsFilter, _ domain.EventType, _, _ string, _ int) ([]domain.NameCount, error) {
+	return nil, nil
+}
+
 type fakeVisitorRepo struct {
 	upserted []domain.Visitor
 }
@@ -56,6 +60,20 @@ func (f *fakeProjectRepo) List(_ context.Context) ([]domain.Project, error) {
 		out = append(out, f.byID[id])
 	}
 	return out, nil
+}
+
+func (f *fakeProjectRepo) Delete(_ context.Context, id string) error {
+	if p, ok := f.byID[id]; ok {
+		delete(f.byHash, p.APIKeyHash)
+	}
+	delete(f.byID, id)
+	for i, oid := range f.order {
+		if oid == id {
+			f.order = append(f.order[:i], f.order[i+1:]...)
+			break
+		}
+	}
+	return nil
 }
 
 func (f *fakeProjectRepo) FindByID(_ context.Context, id string) (domain.Project, error) {

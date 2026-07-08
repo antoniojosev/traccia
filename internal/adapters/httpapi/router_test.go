@@ -2,15 +2,23 @@ package httpapi_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/antoniojosev/traccia/internal/adapters/httpapi"
+	"github.com/antoniojosev/traccia/internal/adapters/ratelimit"
 	"github.com/antoniojosev/traccia/internal/usecase"
 )
 
 func newTestRouter(t *testing.T, rateLimitPerMinute int) http.Handler {
+	t.Helper()
+	return newTestRouterWithPing(t, rateLimitPerMinute, nil)
+}
+
+func newTestRouterWithPing(t *testing.T, rateLimitPerMinute int, ping func(context.Context) error) http.Handler {
 	t.Helper()
 	projects := newFakeProjectRepo()
 	events := &fakeEventRepo{}
@@ -23,7 +31,8 @@ func newTestRouter(t *testing.T, rateLimitPerMinute int) http.Handler {
 		TrackEvent:      usecase.NewTrackEvent(events, fakeUAParser{}, fakeGeoResolver{}),
 		IdentifyVisitor: usecase.NewIdentifyVisitor(visitors),
 		GetStats:        usecase.NewGetStats(events),
-		RateLimiter:     httpapi.NewRateLimiter(rateLimitPerMinute),
+		RateLimiter:     ratelimit.New(rateLimitPerMinute),
+		Ping:            ping,
 	})
 }
 
@@ -72,6 +81,30 @@ func TestRouter_HealthzOK(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestRouter_HealthzOKWhenDatabaseReachable(t *testing.T) {
+	router := newTestRouterWithPing(t, 120, func(context.Context) error { return nil })
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestRouter_HealthzFailsWhenDatabaseUnreachable(t *testing.T) {
+	router := newTestRouterWithPing(t, 120, func(context.Context) error { return errors.New("connection refused") })
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
 	}
 }
 
