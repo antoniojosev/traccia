@@ -46,6 +46,7 @@ func main() {
 		TrackEvent:      usecase.NewTrackEvent(events, uaParser, geoResolver),
 		IdentifyVisitor: usecase.NewIdentifyVisitor(visitors),
 		GetStats:        usecase.NewGetStats(events),
+		RateLimiter:     httpapi.NewRateLimiter(cfg.RateLimitPerMinute),
 	})
 
 	log.Printf("traccia listening on :%s", cfg.Port)

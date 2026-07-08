@@ -46,3 +46,16 @@ func TestGetStats_PassesExcludeNamedThrough(t *testing.T) {
 		t.Errorf("expected ExcludeNamed to be passed through to the filter")
 	}
 }
+
+func TestGetStats_PassesIncludeBotsThrough(t *testing.T) {
+	repo := &spyEventRepo{}
+	uc := usecase.NewGetStats(repo)
+
+	_, err := uc.Execute(context.Background(), usecase.GetStatsInput{ProjectID: "p1", IncludeBots: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !repo.lastFilter.IncludeBots {
+		t.Errorf("expected IncludeBots to be passed through to the filter")
+	}
+}

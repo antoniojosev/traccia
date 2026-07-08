@@ -44,14 +44,26 @@ func (r *EventRepository) Save(ctx context.Context, event domain.Event) error {
 	return err
 }
 
-func (r *EventRepository) Stats(ctx context.Context, filter domain.StatsFilter) (domain.Stats, error) {
-	exclude := ""
-	if filter.ExcludeNamed {
-		exclude = `AND NOT EXISTS (
+// filterClause builds the extra AND conditions shared by every stats query
+// below. Concatenation is safe here: the fragments are fixed strings picked
+// from filter booleans, never raw user input — all user-supplied values
+// stay bound as query parameters.
+func filterClause(f domain.StatsFilter) string {
+	clause := ""
+	if f.ExcludeNamed {
+		clause += ` AND NOT EXISTS (
 			SELECT 1 FROM visitors v
 			WHERE v.project_id = e.project_id AND v.visitor_id = e.visitor_id AND v.name <> ''
 		)`
 	}
+	if !f.IncludeBots {
+		clause += ` AND e.device_type <> 'bot'`
+	}
+	return clause
+}
+
+func (r *EventRepository) Stats(ctx context.Context, filter domain.StatsFilter) (domain.Stats, error) {
+	exclude := filterClause(filter)
 
 	var stats domain.Stats
 	err := r.pool.QueryRow(ctx, `
