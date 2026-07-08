@@ -1,0 +1,5 @@
+.env
+/traccia
+/dist
+node_modules/
+*.log

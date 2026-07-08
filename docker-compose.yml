@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: traccia
+      POSTGRES_PASSWORD: traccia
+      POSTGRES_DB: traccia
+    volumes:
+      - traccia_pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+
+  traccia:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      PORT: 8080
+      DATABASE_URL: postgres://traccia:traccia@postgres:5432/traccia?sslmode=disable
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env}
+    ports:
+      - "8080:8080"
+
+volumes:
+  traccia_pgdata:

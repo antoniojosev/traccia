@@ -1,0 +1,20 @@
+{
+  "name": "traccia",
+  "version": "0.1.0",
+  "description": "Tracking client for Traccia, a self-hosted, privacy-first analytics server.",
+  "main": "src/traccia.js",
+  "files": [
+    "src"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/antoniojosev/traccia"
+  },
+  "keywords": [
+    "analytics",
+    "self-hosted",
+    "privacy",
+    "tracking"
+  ]
+}
