@@ -85,7 +85,114 @@ func (r *EventRepository) Stats(ctx context.Context, filter domain.StatsFilter) 
 	if stats.VisitsOverTime, err = r.visitsOverTime(ctx, filter, exclude); err != nil {
 		return domain.Stats{}, err
 	}
+	if stats.DeviceTypes, err = r.groupBy(ctx, filter, exclude, "device_type", "e.device_type <> ''"); err != nil {
+		return domain.Stats{}, err
+	}
+	if stats.Browsers, err = r.groupBy(ctx, filter, exclude, "browser", "e.browser <> ''"); err != nil {
+		return domain.Stats{}, err
+	}
+	if stats.OperatingSystems, err = r.groupBy(ctx, filter, exclude, "os", "e.os <> ''"); err != nil {
+		return domain.Stats{}, err
+	}
+	if stats.CustomEventNames, err = r.eventNameBreakdown(ctx, filter, exclude, domain.EventTypeCustom); err != nil {
+		return domain.Stats{}, err
+	}
+	if stats.ErrorEventNames, err = r.eventNameBreakdown(ctx, filter, exclude, domain.EventTypeError); err != nil {
+		return domain.Stats{}, err
+	}
 	return stats, nil
+}
+
+// groupBy runs the "group events by <column>, count, top 10" shape shared
+// by the device/browser/OS breakdowns, which differ only in which column
+// and non-empty predicate they use. column and nonEmptyPredicate are always
+// fixed string literals supplied by this package, never user input, so
+// concatenating them is safe — the same reasoning as filterClause above.
+func (r *EventRepository) groupBy(ctx context.Context, f domain.StatsFilter, exclude, column, nonEmptyPredicate string) ([]domain.NameCount, error) {
+	query := `
+		SELECT ` + column + `, COUNT(*) AS c
+		FROM events e
+		WHERE e.project_id = $1 AND e.created_at >= $2 AND e.created_at < $3 AND ` + nonEmptyPredicate + exclude + `
+		GROUP BY ` + column + `
+		ORDER BY c DESC
+		LIMIT 10
+	`
+	rows, err := r.pool.Query(ctx, query, f.ProjectID, f.Since, f.Until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.NameCount
+	for rows.Next() {
+		var nc domain.NameCount
+		if err := rows.Scan(&nc.Name, &nc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, nc)
+	}
+	return out, rows.Err()
+}
+
+func (r *EventRepository) eventNameBreakdown(ctx context.Context, f domain.StatsFilter, exclude string, eventType domain.EventType) ([]domain.NameCount, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT event_name, COUNT(*) AS c
+		FROM events e
+		WHERE e.project_id = $1 AND e.created_at >= $2 AND e.created_at < $3
+			AND e.event_type = $4 AND e.event_name <> '' `+exclude+`
+		GROUP BY event_name
+		ORDER BY c DESC
+		LIMIT 20
+	`, f.ProjectID, f.Since, f.Until, string(eventType))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.NameCount
+	for rows.Next() {
+		var nc domain.NameCount
+		if err := rows.Scan(&nc.Name, &nc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, nc)
+	}
+	return out, rows.Err()
+}
+
+// RecentByName drills into a single event name with its full metadata — a
+// shape a grouped aggregate can't express, so it's a plain ordered list
+// instead of a GROUP BY.
+func (r *EventRepository) RecentByName(ctx context.Context, filter domain.StatsFilter, eventType domain.EventType, name string, limit int) ([]domain.EventDetail, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT visitor_id, metadata, created_at
+		FROM events e
+		WHERE e.project_id = $1 AND e.created_at >= $2 AND e.created_at < $3
+			AND e.event_type = $4 AND e.event_name = $5
+		ORDER BY e.created_at DESC
+		LIMIT $6
+	`, filter.ProjectID, filter.Since, filter.Until, string(eventType), name, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.EventDetail
+	for rows.Next() {
+		var detail domain.EventDetail
+		var metadataJSON []byte
+		if err := rows.Scan(&detail.VisitorID, &metadataJSON, &detail.CreatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(metadataJSON, &detail.Metadata); err != nil {
+			return nil, err
+		}
+		out = append(out, detail)
+	}
+	return out, rows.Err()
 }
 
 func (r *EventRepository) topPaths(ctx context.Context, f domain.StatsFilter, exclude string) ([]domain.PathCount, error) {

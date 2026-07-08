@@ -1,0 +1,13 @@
+{{define "event-drilldown"}}
+<h3>{{.Name}} <span class="muted">({{.Type}})</span></h3>
+<table>
+  <thead><tr><th>Cuándo</th><th>Visitante</th><th>Metadata</th></tr></thead>
+  <tbody>
+  {{range .Samples}}
+    <tr><td>{{.CreatedAt}}</td><td class="mono">{{.VisitorID}}</td><td class="mono">{{.MetadataJSON}}</td></tr>
+  {{else}}
+    <tr><td colspan="3" class="muted">Sin eventos en este rango.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}

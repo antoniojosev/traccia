@@ -1,14 +1,16 @@
-package httpapi_test
+package dashboard_test
 
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/antoniojosev/traccia/internal/domain"
 )
 
 type fakeEventRepo struct {
-	saved []domain.Event
+	saved   []domain.Event
+	samples []domain.EventDetail
 }
 
 func (f *fakeEventRepo) Save(_ context.Context, event domain.Event) error {
@@ -17,20 +19,14 @@ func (f *fakeEventRepo) Save(_ context.Context, event domain.Event) error {
 }
 
 func (f *fakeEventRepo) Stats(_ context.Context, _ domain.StatsFilter) (domain.Stats, error) {
-	return domain.Stats{TotalEvents: int64(len(f.saved))}, nil
+	return domain.Stats{
+		TotalEvents:    int64(len(f.saved)),
+		VisitsOverTime: []domain.TimeseriesPoint{{Bucket: time.Now(), Count: int64(len(f.saved))}},
+	}, nil
 }
 
 func (f *fakeEventRepo) RecentByName(_ context.Context, _ domain.StatsFilter, _ domain.EventType, _ string, _ int) ([]domain.EventDetail, error) {
-	return nil, nil
-}
-
-type fakeVisitorRepo struct {
-	upserted []domain.Visitor
-}
-
-func (f *fakeVisitorRepo) Upsert(_ context.Context, visitor domain.Visitor) error {
-	f.upserted = append(f.upserted, visitor)
-	return nil
+	return f.samples, nil
 }
 
 type fakeProjectRepo struct {
@@ -72,16 +68,4 @@ func (fakeKeyHasher) Generate() (plainKey string, hash string, err error) {
 
 func (fakeKeyHasher) Hash(plainKey string) string {
 	return "hash-of-" + plainKey
-}
-
-type fakeUAParser struct{}
-
-func (fakeUAParser) Parse(_ string) domain.DeviceInfo {
-	return domain.DeviceInfo{DeviceType: "desktop", Browser: "chrome", OS: "linux"}
-}
-
-type fakeGeoResolver struct{}
-
-func (fakeGeoResolver) Resolve(_ string) domain.GeoInfo {
-	return domain.GeoInfo{}
 }

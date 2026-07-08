@@ -71,5 +71,19 @@ UNAUTH_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/api/v1/stats")
 [ "$UNAUTH_CODE" = "401" ] || fail "expected 401 for stats without api key, got $UNAUTH_CODE"
 pass "stats without api key -> 401"
 
+curl -sf "$BASE_URL/dashboard/login" | grep -q "Traccia" || fail "/dashboard/login did not render"
+pass "GET /dashboard/login"
+
+DASHBOARD_REDIRECT=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/dashboard")
+[ "$DASHBOARD_REDIRECT" = "303" ] || fail "expected 303 redirect to login for /dashboard without a session, got $DASHBOARD_REDIRECT"
+pass "GET /dashboard without session -> 303 redirect to login"
+
+DASHBOARD_LOGIN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -c /tmp/traccia-smoke-cookies.txt -X POST "$BASE_URL/dashboard/login" \
+  --data-urlencode "api_key=$API_KEY")
+[ "$DASHBOARD_LOGIN_STATUS" = "303" ] || fail "expected 303 after dashboard login, got $DASHBOARD_LOGIN_STATUS"
+curl -sf -b /tmp/traccia-smoke-cookies.txt "$BASE_URL/dashboard" | grep -q "Eventos totales" || fail "dashboard did not render stats after login"
+rm -f /tmp/traccia-smoke-cookies.txt
+pass "dashboard login + overview render"
+
 echo
 echo "ALL SMOKE CHECKS PASSED"

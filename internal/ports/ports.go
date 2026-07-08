@@ -11,6 +11,10 @@ import (
 type EventRepository interface {
 	Save(ctx context.Context, event domain.Event) error
 	Stats(ctx context.Context, filter domain.StatsFilter) (domain.Stats, error)
+	// RecentByName drills into a single custom/error event name — e.g. the
+	// dashboard's "calculator_used" panel showing the last N occurrences
+	// with their full metadata, which a grouped aggregate can't express.
+	RecentByName(ctx context.Context, filter domain.StatsFilter, eventType domain.EventType, name string, limit int) ([]domain.EventDetail, error)
 }
 
 // ProjectRepository manages tenants and their API keys.

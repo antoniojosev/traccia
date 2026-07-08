@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"log"
 	"net/http"
 
 	"github.com/antoniojosev/traccia/internal/adapters/apikey"
+	"github.com/antoniojosev/traccia/internal/adapters/dashboard"
 	"github.com/antoniojosev/traccia/internal/adapters/geoip"
 	"github.com/antoniojosev/traccia/internal/adapters/httpapi"
 	"github.com/antoniojosev/traccia/internal/adapters/postgres"
@@ -21,6 +24,10 @@ func main() {
 	}
 	if cfg.AdminToken == "" {
 		log.Println("warning: ADMIN_TOKEN is not set, POST /api/v1/projects is unreachable")
+	}
+	if cfg.SessionSecret == "" {
+		cfg.SessionSecret = deriveSessionSecret(cfg.AdminToken)
+		log.Println("warning: SESSION_SECRET is not set, deriving one from ADMIN_TOKEN — set your own for production")
 	}
 
 	ctx := context.Background()
@@ -39,18 +46,41 @@ func main() {
 	geoResolver := geoip.NewNoopResolver()
 	keyHasher := apikey.NewSHA256Hasher()
 
-	router := httpapi.NewRouter(httpapi.Deps{
+	auth := usecase.NewAuthenticateProject(projects, keyHasher)
+	getStats := usecase.NewGetStats(events)
+
+	apiRouter := httpapi.NewRouter(httpapi.Deps{
 		AdminToken:      cfg.AdminToken,
-		Auth:            usecase.NewAuthenticateProject(projects, keyHasher),
+		Auth:            auth,
 		CreateProject:   usecase.NewCreateProject(projects, keyHasher),
 		TrackEvent:      usecase.NewTrackEvent(events, uaParser, geoResolver),
 		IdentifyVisitor: usecase.NewIdentifyVisitor(visitors),
-		GetStats:        usecase.NewGetStats(events),
+		GetStats:        getStats,
 		RateLimiter:     httpapi.NewRateLimiter(cfg.RateLimitPerMinute),
 	})
 
+	dashboardHandler := dashboard.NewHandler(dashboard.Deps{
+		Auth:       auth,
+		GetStats:   getStats,
+		GetSamples: usecase.NewGetEventSamples(events),
+		Sessions:   dashboard.NewSessionManager(cfg.SessionSecret),
+	})
+
+	// The dashboard's own mux has entries for both the exact "/dashboard"
+	// path and everything below it, so it needs registering at both here —
+	// a single "/dashboard/" prefix pattern wouldn't match bare "/dashboard".
+	mux := http.NewServeMux()
+	mux.Handle("/dashboard", dashboardHandler)
+	mux.Handle("/dashboard/", dashboardHandler)
+	mux.Handle("/", apiRouter)
+
 	log.Printf("traccia listening on :%s", cfg.Port)
-	if err := http.ListenAndServe(":"+cfg.Port, router); err != nil {
+	if err := http.ListenAndServe(":"+cfg.Port, mux); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func deriveSessionSecret(adminToken string) string {
+	sum := sha256.Sum256([]byte("traccia-session-fallback:" + adminToken))
+	return hex.EncodeToString(sum[:])
 }

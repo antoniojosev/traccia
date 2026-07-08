@@ -66,6 +66,38 @@ curl "http://localhost:8080/api/v1/stats?include_bots=true&exclude_named=true" \
   -H "Authorization: Bearer <api_key>"
 ```
 
+Or skip curl entirely: visit `http://localhost:8080/dashboard` and log in
+with the API key — see [Dashboard](#dashboard) below.
+
+## Dashboard
+
+Server-rendered (HTMX + Go templates, no frontend build step) and embedded
+in the binary via `embed.FS` — same "one binary" story as the tracking
+script. Log in with a project's API key at `/dashboard` to see:
+
+- Total events / unique visitors and a visits-over-time chart (uPlot,
+  vendored, no CDN)
+- Top pages, referrers, device types, browsers, operating systems
+- Custom events and errors, grouped by name, with a drill-down into the
+  last 50 occurrences of any one of them (including full metadata)
+- Toggles for the same `exclude_named`/`include_bots` filters the API
+  supports
+
+Sessions are signed cookies (`SESSION_SECRET`, falls back to one derived
+from `ADMIN_TOKEN` if unset — set your own for production) — there's no
+server-side session store, so nothing to clean up and nothing lost on
+restart except active logins.
+
+Want to see it with data instead of an empty state? `EVENTS=300 ADMIN_TOKEN=... ./scripts/seed-demo.sh`
+creates a demo project and floods it with a realistic mix of traffic.
+
+**Scoping note**: per-key metadata aggregation (e.g. "average `amount` for
+`calculator_used`") isn't implemented — the drill-down shows raw recent
+events with their metadata instead. Generic JSONB key aggregation is a
+sharper SQL problem than it looks and didn't seem worth the risk without
+being able to verify it against a real database in this environment (see
+the hardening PR). Documented here rather than silently scoped out.
+
 ## Security model
 
 Two kinds of keys, two trust levels:
@@ -105,6 +137,7 @@ internal/
     useragent    default UA parser
     geoip        default (no-op) geo resolver
     apikey       default key hasher
+    dashboard    embedded HTMX dashboard (templates, static, sessions)
 sdk/js           tracking script — plain <script> tag or npm package,
                  same file, embedded into the Go binary and served at /t.js
 migrations       plain SQL, applied by Postgres' docker-entrypoint-initdb.d
@@ -113,12 +146,12 @@ migrations       plain SQL, applied by Postgres' docker-entrypoint-initdb.d
 
 ## Roadmap
 
-- Dashboard UI (embedded in the binary via `embed.FS`, same "one binary"
-  story as the tracking script)
 - Plugin runtime via an embedded JS interpreter (`goja`) — extension points
-  like `onEvent`/`beforeStore`/`onStatsQuery`, so custom logic ships as a
-  `.js` file dropped in `plugins/`, no recompilation
+  like `onEvent`/`registerPanel`, so custom logic (and custom dashboard
+  panels) ship as a `.js` file dropped in `plugins/`, no recompilation
 - MaxMind GeoIP adapter
+- Per-key metadata aggregation for custom events (see the Dashboard
+  section's scoping note)
 
 ## License
 

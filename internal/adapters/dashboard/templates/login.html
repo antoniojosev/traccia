@@ -1,0 +1,13 @@
+{{define "login-page"}}
+{{template "header" .}}
+<div class="login-box">
+  <h1>Traccia</h1>
+  <p>Ingresa la API key de tu proyecto para ver sus estadísticas.</p>
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+  <form method="post" action="/dashboard/login">
+    <input type="password" name="api_key" placeholder="API key" required autofocus>
+    <button type="submit">Entrar</button>
+  </form>
+</div>
+{{template "footer" .}}
+{{end}}

@@ -10,6 +10,10 @@ type Config struct {
 	DatabaseURL        string
 	AdminToken         string
 	RateLimitPerMinute int
+	// SessionSecret signs dashboard login cookies. Empty means main.go
+	// derives one from AdminToken — fine to get started, but set your own
+	// for production so dashboard sessions don't depend on that secret too.
+	SessionSecret string
 }
 
 func Load() Config {
@@ -18,6 +22,7 @@ func Load() Config {
 		DatabaseURL:        getEnv("DATABASE_URL", ""),
 		AdminToken:         getEnv("ADMIN_TOKEN", ""),
 		RateLimitPerMinute: getEnvInt("RATE_LIMIT_PER_MINUTE", 120),
+		SessionSecret:      getEnv("SESSION_SECRET", ""),
 	}
 }
 

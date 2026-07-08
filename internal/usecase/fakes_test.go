@@ -20,6 +20,10 @@ func (f *fakeEventRepo) Stats(_ context.Context, _ domain.StatsFilter) (domain.S
 	return domain.Stats{}, nil
 }
 
+func (f *fakeEventRepo) RecentByName(_ context.Context, _ domain.StatsFilter, _ domain.EventType, _ string, _ int) ([]domain.EventDetail, error) {
+	return nil, nil
+}
+
 type fakeUAParser struct{}
 
 func (fakeUAParser) Parse(_ string) domain.DeviceInfo {
