@@ -1,0 +1,21 @@
+{{define "admin-setup-page"}}
+{{template "header" .}}
+<div class="login-box">
+  <h1>Crear tu cuenta</h1>
+  <p>Primera vez acá — creá el usuario que vas a usar para administrar tus proyectos.</p>
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+  <form method="post" action="/admin/setup">
+    <label for="username">Usuario
+      <input id="username" type="text" name="username" value="{{.Username}}" autocomplete="username" spellcheck="false" required autofocus minlength="3">
+    </label>
+    <label for="password">Contraseña
+      <input id="password" type="password" name="password" autocomplete="new-password" required minlength="8">
+    </label>
+    <label for="password_confirm">Confirmar contraseña
+      <input id="password_confirm" type="password" name="password_confirm" autocomplete="new-password" required minlength="8">
+    </label>
+    <button type="submit">Crear cuenta</button>
+  </form>
+</div>
+{{template "footer" .}}
+{{end}}

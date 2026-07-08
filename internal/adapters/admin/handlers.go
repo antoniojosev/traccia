@@ -1,12 +1,14 @@
 // Package admin is the control-plane panel: create/list projects and jump
-// into a project's dashboard, gated by ADMIN_TOKEN — a different trust
-// level than the dashboard package's per-project API key sessions. It's
-// the human-friendly alternative to POST /api/v1/projects via curl, not a
-// replacement for it (scripts/automation still use the API).
+// into a project's dashboard. Gated by its own human accounts (username +
+// password, one-time setup, see NeedsAdminSetup) — a different, more
+// privileged trust level than the dashboard package's per-project API key
+// sessions. It's the human-friendly alternative to POST /api/v1/projects
+// via curl, not a replacement for it (scripts/automation still use the
+// API with ADMIN_TOKEN, which this panel no longer touches at all).
 package admin
 
 import (
-	"crypto/subtle"
+	"errors"
 	"html/template"
 	"net/http"
 
@@ -15,15 +17,17 @@ import (
 )
 
 type Deps struct {
-	AdminToken    string
-	Sessions      *session.Manager
-	CreateProject *usecase.CreateProject
-	ListProjects  *usecase.ListProjects
-	GetProject    *usecase.GetProject
-	// DashboardSessions mints a dashboard login session directly — the
-	// admin already proved elevated trust via AdminToken, so "view this
-	// project's dashboard" doesn't require re-entering that project's API
-	// key (which the admin panel never has in plaintext anyway).
+	Sessions              *session.Manager
+	RegisterAdminUser     *usecase.RegisterAdminUser
+	AuthenticateAdminUser *usecase.AuthenticateAdminUser
+	NeedsSetup            *usecase.NeedsAdminSetup
+	CreateProject         *usecase.CreateProject
+	ListProjects          *usecase.ListProjects
+	GetProject            *usecase.GetProject
+	// DashboardSessions mints a dashboard login session directly — an
+	// admin account already carries more trust than any single project's
+	// API key (which this panel never handles in plaintext anyway), so
+	// "view this project's dashboard" doesn't require re-entering it.
 	DashboardSessions *session.Manager
 }
 
@@ -31,22 +35,33 @@ func NewHandler(deps Deps) http.Handler {
 	tmpl := parseTemplates()
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /admin/login", handleLoginPage(tmpl))
+	mux.HandleFunc("GET /admin/setup", handleSetupPage(deps, tmpl))
+	mux.HandleFunc("POST /admin/setup", handleSetupSubmit(deps, tmpl))
+	mux.HandleFunc("GET /admin/login", handleLoginPage(deps, tmpl))
 	mux.HandleFunc("POST /admin/login", handleLoginSubmit(deps, tmpl))
 	mux.HandleFunc("POST /admin/logout", handleLogout(deps))
 	mux.HandleFunc("GET /admin", requireAdminSession(deps, handleProjectsList(deps, tmpl)))
 	mux.HandleFunc("GET /admin/projects/new", requireAdminSession(deps, handleNewProjectPage(tmpl)))
 	mux.HandleFunc("POST /admin/projects/new", requireAdminSession(deps, handleNewProjectSubmit(deps, tmpl)))
 	mux.HandleFunc("POST /admin/projects/{id}/view", requireAdminSession(deps, handleViewProject(deps)))
-	mux.Handle("GET /admin/static/", staticHandler())
 
 	return mux
 }
 
-const adminSubject = "admin"
-
+// requireAdminSession redirects to /admin/setup before /admin/login when
+// no account exists yet — a fresh install should never show a login form
+// for an account that can't possibly exist.
 func requireAdminSession(deps Deps, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		needsSetup, err := deps.NeedsSetup.Execute(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if needsSetup {
+			http.Redirect(w, r, "/admin/setup", http.StatusSeeOther)
+			return
+		}
 		if _, err := deps.Sessions.SubjectFromRequest(r); err != nil {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
@@ -55,12 +70,78 @@ func requireAdminSession(deps Deps, next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-type loginView struct {
-	Error string
+type setupView struct {
+	Error    string
+	Username string
 }
 
-func handleLoginPage(tmpl *template.Template) http.HandlerFunc {
+func handleSetupPage(deps Deps, tmpl *template.Template) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		needsSetup, err := deps.NeedsSetup.Execute(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !needsSetup {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		tmpl.ExecuteTemplate(w, "admin-setup-page", setupView{})
+	}
+}
+
+func handleSetupSubmit(deps Deps, tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		username := r.FormValue("username")
+		password := r.FormValue("password")
+
+		if password != r.FormValue("password_confirm") {
+			w.WriteHeader(http.StatusBadRequest)
+			tmpl.ExecuteTemplate(w, "admin-setup-page", setupView{
+				Error: "Las contraseñas no coinciden.", Username: username,
+			})
+			return
+		}
+
+		user, err := deps.RegisterAdminUser.Execute(r.Context(), username, password)
+		if err != nil {
+			if errors.Is(err, usecase.ErrAdminSetupClosed) {
+				http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+				return
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			tmpl.ExecuteTemplate(w, "admin-setup-page", setupView{
+				Error:    "El usuario debe tener al menos 3 caracteres y la contraseña al menos 8.",
+				Username: username,
+			})
+			return
+		}
+
+		deps.Sessions.SetCookie(w, user.ID)
+		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	}
+}
+
+type loginView struct {
+	Error    string
+	Username string
+}
+
+func handleLoginPage(deps Deps, tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		needsSetup, err := deps.NeedsSetup.Execute(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if needsSetup {
+			http.Redirect(w, r, "/admin/setup", http.StatusSeeOther)
+			return
+		}
 		tmpl.ExecuteTemplate(w, "admin-login-page", loginView{})
 	}
 }
@@ -72,14 +153,17 @@ func handleLoginSubmit(deps Deps, tmpl *template.Template) http.HandlerFunc {
 			return
 		}
 
-		token := r.FormValue("admin_token")
-		if deps.AdminToken == "" || subtle.ConstantTimeCompare([]byte(token), []byte(deps.AdminToken)) != 1 {
+		username := r.FormValue("username")
+		user, err := deps.AuthenticateAdminUser.Execute(r.Context(), username, r.FormValue("password"))
+		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
-			tmpl.ExecuteTemplate(w, "admin-login-page", loginView{Error: "ADMIN_TOKEN inválido."})
+			tmpl.ExecuteTemplate(w, "admin-login-page", loginView{
+				Error: "Usuario o contraseña incorrectos.", Username: username,
+			})
 			return
 		}
 
-		deps.Sessions.SetCookie(w, adminSubject)
+		deps.Sessions.SetCookie(w, user.ID)
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 	}
 }

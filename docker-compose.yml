@@ -11,12 +11,24 @@ services:
       - ./migrations:/docker-entrypoint-initdb.d
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U traccia"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
 
   traccia:
     build: .
     restart: unless-stopped
     depends_on:
-      - postgres
+      postgres:
+        # Not just "container started" — pg_isready only succeeds once
+        # Postgres finishes running migrations/*.sql via
+        # docker-entrypoint-initdb.d and is actually accepting queries.
+        # Without this, the app can boot and serve /healthz (which has no
+        # DB dependency) before Postgres is really ready, and the first
+        # real query racing that window fails.
+        condition: service_healthy
     environment:
       PORT: 8080
       DATABASE_URL: postgres://traccia:traccia@postgres:5432/traccia?sslmode=disable

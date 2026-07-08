@@ -1,16 +1,14 @@
 {{define "admin-projects-page"}}
 {{template "header" .}}
-<header class="topbar">
-  <span class="brand">Traccia Admin</span>
-  <div class="topbar-actions">
-    <a href="/admin/projects/new" class="button">+ Nuevo proyecto</a>
-    <form method="post" action="/admin/logout"><button class="link-button" type="submit">Cerrar sesión</button></form>
-  </div>
-</header>
+{{template "nav" .}}
 <main>
+  <div class="page-header">
+    <h1>Proyectos</h1>
+    <a href="/admin/projects/new" class="button">+ Nuevo proyecto</a>
+  </div>
   <table>
     <thead>
-      <tr><th>Nombre</th><th>Dominio</th><th>Project ID</th><th>Creado</th><th></th></tr>
+      <tr><th scope="col">Nombre</th><th scope="col">Dominio</th><th scope="col">Project ID</th><th scope="col">Creado</th><th scope="col"><span class="visually-hidden">Acciones</span></th></tr>
     </thead>
     <tbody>
       {{range .Projects}}
@@ -26,7 +24,7 @@
         </td>
       </tr>
       {{else}}
-      <tr><td colspan="5" class="muted">Todavía no hay proyectos. Creá el primero con "+ Nuevo proyecto".</td></tr>
+      <tr><td colspan="5" class="muted">Todavía no hay proyectos. Creá el primero con «+ Nuevo proyecto».</td></tr>
       {{end}}
     </tbody>
   </table>

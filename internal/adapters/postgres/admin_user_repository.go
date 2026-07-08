@@ -1,0 +1,46 @@
+package postgres
+
+import (
+	"context"
+	"errors"
+
+	"github.com/antoniojosev/traccia/internal/domain"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+var ErrAdminUserNotFound = errors.New("postgres: admin user not found")
+
+type AdminUserRepository struct {
+	pool *pgxpool.Pool
+}
+
+func NewAdminUserRepository(pool *pgxpool.Pool) *AdminUserRepository {
+	return &AdminUserRepository{pool: pool}
+}
+
+func (r *AdminUserRepository) Create(ctx context.Context, user domain.AdminUser) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO admin_users (id, username, password_hash, created_at)
+		VALUES ($1, $2, $3, $4)
+	`, user.ID, user.Username, user.PasswordHash, user.CreatedAt)
+	return err
+}
+
+func (r *AdminUserRepository) FindByUsername(ctx context.Context, username string) (domain.AdminUser, error) {
+	var u domain.AdminUser
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, username, password_hash, created_at FROM admin_users WHERE username = $1`,
+		username,
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.AdminUser{}, ErrAdminUserNotFound
+	}
+	return u, err
+}
+
+func (r *AdminUserRepository) Count(ctx context.Context) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_users`).Scan(&count)
+	return count, err
+}

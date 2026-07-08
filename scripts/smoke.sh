@@ -93,14 +93,32 @@ rm -f /tmp/traccia-smoke-cookies.txt
 pass "dashboard login + overview render"
 
 ADMIN_REDIRECT=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/admin")
-[ "$ADMIN_REDIRECT" = "303" ] || fail "expected 303 redirect to login for /admin without a session, got $ADMIN_REDIRECT"
-pass "GET /admin without session -> 303 redirect to login"
+[ "$ADMIN_REDIRECT" = "303" ] || fail "expected 303 redirect (to setup or login) for /admin without a session, got $ADMIN_REDIRECT"
+pass "GET /admin without session -> 303 redirect"
 
-ADMIN_LOGIN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -c /tmp/traccia-smoke-admin-cookies.txt -X POST "$BASE_URL/admin/login" \
-  --data-urlencode "admin_token=$ADMIN_TOKEN")
-[ "$ADMIN_LOGIN_STATUS" = "303" ] || fail "expected 303 after admin login, got $ADMIN_LOGIN_STATUS"
+# The admin panel has its own one-time account setup (username/password),
+# separate from ADMIN_TOKEN (which stays purely an API credential — see
+# the Admin panel section of the README). Only the first run needs
+# /admin/setup; a re-run against a database that already has an account
+# would hit /admin/login instead, so this script tolerates either.
+ADMIN_USERNAME="smoketest"
+ADMIN_PASSWORD="smoke-test-password-123"
+
+NEEDS_SETUP=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/admin/setup")
+if [ "$NEEDS_SETUP" = "200" ]; then
+  ADMIN_LOGIN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -c /tmp/traccia-smoke-admin-cookies.txt -X POST "$BASE_URL/admin/setup" \
+    --data-urlencode "username=$ADMIN_USERNAME" --data-urlencode "password=$ADMIN_PASSWORD" --data-urlencode "password_confirm=$ADMIN_PASSWORD")
+  [ "$ADMIN_LOGIN_STATUS" = "303" ] || fail "expected 303 after admin setup, got $ADMIN_LOGIN_STATUS"
+  pass "admin setup creates the first account"
+else
+  ADMIN_LOGIN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -c /tmp/traccia-smoke-admin-cookies.txt -X POST "$BASE_URL/admin/login" \
+    --data-urlencode "username=$ADMIN_USERNAME" --data-urlencode "password=$ADMIN_PASSWORD")
+  [ "$ADMIN_LOGIN_STATUS" = "303" ] || fail "expected 303 after admin login, got $ADMIN_LOGIN_STATUS (an account from a prior run may use different credentials)"
+  pass "admin login"
+fi
+
 curl -sf -b /tmp/traccia-smoke-admin-cookies.txt "$BASE_URL/admin" | grep -q "Smoke Test" || fail "admin panel did not list the project created earlier"
-pass "admin login + project list"
+pass "admin project list"
 
 ADMIN_CREATE_HTML=$(curl -sf -b /tmp/traccia-smoke-admin-cookies.txt -X POST "$BASE_URL/admin/projects/new" \
   --data-urlencode "name=Admin Panel Smoke" --data-urlencode "domain=admin-smoke.example.com")
@@ -113,8 +131,12 @@ ADMIN_VIEW_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -b /tmp/traccia-smoke
   -X POST "$BASE_URL/admin/projects/$ADMIN_PROJECT_ID/view")
 [ "$ADMIN_VIEW_STATUS" = "303" ] || fail "expected 303 from admin's view-dashboard action, got $ADMIN_VIEW_STATUS"
 curl -sf -b /tmp/traccia-smoke-admin-cookies.txt "$BASE_URL/dashboard" | grep -q "Eventos totales" || fail "dashboard did not render after admin's view-dashboard jump"
+curl -sf -b /tmp/traccia-smoke-admin-cookies.txt "$BASE_URL/dashboard" | grep -q 'href="/admin"' || fail "dashboard did not show a link back to the admin panel"
 rm -f /tmp/traccia-smoke-admin-cookies.txt
-pass "admin 'ver dashboard' jump mints a working dashboard session"
+pass "admin 'ver dashboard' jump mints a working dashboard session, with a nav link back"
+
+curl -sf -o /dev/null -w '%{http_code}\n' "$BASE_URL/assets/theme.css" | grep -q "200" || fail "/assets/theme.css did not serve the shared stylesheet"
+pass "shared theme asset served at /assets/theme.css"
 
 echo
 echo "ALL SMOKE CHECKS PASSED"

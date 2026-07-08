@@ -12,10 +12,12 @@ import (
 	"github.com/antoniojosev/traccia/internal/adapters/dashboard"
 	"github.com/antoniojosev/traccia/internal/adapters/geoip"
 	"github.com/antoniojosev/traccia/internal/adapters/httpapi"
+	"github.com/antoniojosev/traccia/internal/adapters/password"
 	"github.com/antoniojosev/traccia/internal/adapters/plugins"
 	"github.com/antoniojosev/traccia/internal/adapters/postgres"
 	"github.com/antoniojosev/traccia/internal/adapters/session"
 	"github.com/antoniojosev/traccia/internal/adapters/useragent"
+	"github.com/antoniojosev/traccia/internal/adapters/webui"
 	"github.com/antoniojosev/traccia/internal/config"
 	"github.com/antoniojosev/traccia/internal/usecase"
 )
@@ -49,6 +51,8 @@ func main() {
 	geoResolver := geoip.NewNoopResolver()
 	keyHasher := apikey.NewSHA256Hasher()
 	pluginKV := postgres.NewPluginKVRepository(pool)
+	adminUsers := postgres.NewAdminUserRepository(pool)
+	passwordHasher := password.NewBcryptHasher()
 
 	pluginManager, err := plugins.Load(cfg.PluginsDir, pluginKV)
 	if err != nil {
@@ -83,18 +87,21 @@ func main() {
 	})
 
 	adminHandler := admin.NewHandler(admin.Deps{
-		AdminToken:        cfg.AdminToken,
-		Sessions:          session.New(cfg.SessionSecret, "traccia_admin_session", "/admin"),
-		CreateProject:     usecase.NewCreateProject(projects, keyHasher),
-		ListProjects:      usecase.NewListProjects(projects),
-		GetProject:        usecase.NewGetProject(projects),
-		DashboardSessions: dashboardSessions,
+		Sessions:              session.New(cfg.SessionSecret, "traccia_admin_session", "/admin"),
+		RegisterAdminUser:     usecase.NewRegisterAdminUser(adminUsers, passwordHasher),
+		AuthenticateAdminUser: usecase.NewAuthenticateAdminUser(adminUsers, passwordHasher),
+		NeedsSetup:            usecase.NewNeedsAdminSetup(adminUsers),
+		CreateProject:         usecase.NewCreateProject(projects, keyHasher),
+		ListProjects:          usecase.NewListProjects(projects),
+		GetProject:            usecase.NewGetProject(projects),
+		DashboardSessions:     dashboardSessions,
 	})
 
 	// Each embedded panel's own mux has entries for both its exact root
 	// path and everything below it, so both need registering here — a
 	// single trailing-slash prefix pattern wouldn't match the bare path.
 	mux := http.NewServeMux()
+	mux.Handle("/assets/", webui.Handler())
 	mux.Handle("/dashboard", dashboardHandler)
 	mux.Handle("/dashboard/", dashboardHandler)
 	mux.Handle("/admin", adminHandler)

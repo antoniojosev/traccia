@@ -22,8 +22,9 @@ cp .env.example .env   # set ADMIN_TOKEN to a long random string
 docker compose up -d
 ```
 
-Create a project at `http://localhost:8080/admin` (log in with
-`ADMIN_TOKEN`) — see [Admin panel](#admin-panel) below. Or script it:
+Create a project at `http://localhost:8080/admin` — the first visit walks
+you through creating your own admin account (username + password, not
+`ADMIN_TOKEN` — see [Admin panel](#admin-panel) below). Or script it:
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/projects \
@@ -103,20 +104,26 @@ the hardening PR). Documented here rather than silently scoped out.
 
 ## Admin panel
 
-`/admin`, gated by `ADMIN_TOKEN` — a different, more privileged trust
-level than a project's own dashboard login. Create and list every project
-without touching curl:
+`/admin` — a human account (username + password), a different and more
+privileged trust level than a project's own dashboard login (which only
+proves you know *one* project's API key). The **first visit** to `/admin`
+walks you through a one-time setup to create that account; after that it's
+a normal login, and there's no open registration — the setup form itself
+redirects to login once an account exists, so it can't be used to add a
+second one.
 
 - **List** every project (name, domain, ID, created date)
 - **Create** a new one, with the same one-time API key reveal as the API
-- **Jump straight into a project's dashboard** without needing that
-  project's API key — the admin panel mints the dashboard session
-  directly, since `ADMIN_TOKEN` already implies more trust than any single
-  project's key
+- **Jump straight into a project's dashboard** with one click, without
+  needing that project's API key — the admin panel mints the dashboard
+  session directly, since an admin account already implies more trust
+  than any single project's key
 
-`POST /api/v1/projects` (the API) still exists and isn't going anywhere —
-this is the human-friendly alternative for when you don't want to script
-it, not a replacement.
+This account is unrelated to `ADMIN_TOKEN`, which stays exactly what it
+was: the API's machine credential for scripting `POST /api/v1/projects`
+(used by `scripts/seed-demo.sh`, CI, whatever you automate). Pasting a
+64-character hex token into a browser login form never made much sense as
+a *human* login — now it doesn't have to.
 
 ## Plugins
 
@@ -152,7 +159,7 @@ instead of dropping it) and working examples: [`docs/plugins.md`](docs/plugins.m
 
 ## Security model
 
-Two kinds of keys, two trust levels:
+Three trust levels, each gating something different:
 
 - **`project_id`** (returned on project creation, embedded in the public
   `<script>` tag): identifies which project an event belongs to. It's not a
@@ -161,8 +168,12 @@ Two kinds of keys, two trust levels:
   A per-IP rate limit on `/api/v1/track` and `/api/v1/identify` (in-memory,
   single-node — see `RATE_LIMIT_PER_MINUTE`, default 120/min) is the real
   defense here, not secrecy.
-- **`api_key`** (shown once on project creation): the only thing gated by
-  it is *reading* aggregated stats. It never appears in client-side code.
+- **`api_key`** (shown once on project creation): gates *reading* that one
+  project's aggregated stats. It never appears in client-side code.
+- **Admin account** (username + password, see [Admin panel](#admin-panel)):
+  gates creating/listing *every* project and viewing any of their
+  dashboards — the most privileged tier. Separate from `ADMIN_TOKEN`,
+  which is the API's own machine credential and never touches the panel.
 
 ## Architecture
 
@@ -176,21 +187,24 @@ Postgres or HTTP. Everything they depend on is an interface in
 | `UserAgentParser` | small heuristic parser | a full regex-database parser |
 | `GeoResolver` | no-op | MaxMind/IP2Location |
 | `APIKeyHasher` | SHA-256 | — |
+| `PasswordHasher` | bcrypt | — |
 
 ```
 cmd/api          entrypoint, wiring
 internal/
-  domain         Event, Visitor, Project, Stats — no external deps
+  domain         Event, Visitor, Project, AdminUser, Stats — no external deps
   ports          interfaces the domain depends on
-  usecase        TrackEvent, IdentifyVisitor, GetStats, CreateProject
+  usecase        TrackEvent, IdentifyVisitor, GetStats, CreateProject, ...
   adapters/
     postgres     default storage
     httpapi      HTTP transport, no business logic
     useragent    default UA parser
     geoip        default (no-op) geo resolver
-    apikey       default key hasher
+    apikey       default API key hasher (SHA-256 — high-entropy tokens)
+    password     default password hasher (bcrypt — low-entropy human passwords)
+    webui        design system shared by dashboard + admin, served at /assets/
     dashboard    embedded HTMX dashboard (templates, static, sessions)
-    admin        embedded HTMX admin panel — create/list projects, jump to dashboard
+    admin        embedded HTMX admin panel — accounts, projects, jump to dashboard
     session      shared HMAC-signed cookie sessions (dashboard + admin)
     plugins      goja plugin runtime + EventRepository decorator
 sdk/js           tracking script — plain <script> tag or npm package,

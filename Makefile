@@ -20,9 +20,11 @@ test-integration:
 		exit $$status
 
 # Full end-to-end check against a real docker-compose stack. See
-# scripts/smoke.sh for what it exercises.
+# scripts/smoke.sh for what it exercises. docker-compose reads .env on its
+# own; smoke.sh needs it exported into its own shell too.
 smoke:
 	docker compose up -d --build
-	./scripts/smoke.sh; status=$$?; \
+	set -a && [ -f .env ] && . ./.env; set +a; \
+		./scripts/smoke.sh; status=$$?; \
 		docker compose down -v; \
 		exit $$status

@@ -51,3 +51,21 @@ type APIKeyHasher interface {
 	Generate() (plainKey string, hash string, err error)
 	Hash(plainKey string) string
 }
+
+// AdminUserRepository stores the /admin panel's human accounts — separate
+// from ProjectRepository, which is per-tenant API access.
+type AdminUserRepository interface {
+	Create(ctx context.Context, user domain.AdminUser) error
+	FindByUsername(ctx context.Context, username string) (domain.AdminUser, error)
+	Count(ctx context.Context) (int, error)
+}
+
+// PasswordHasher hashes and verifies human passwords. Deliberately a
+// separate interface from APIKeyHasher: passwords are low-entropy and
+// need a slow, salted algorithm (bcrypt); API keys are high-entropy random
+// tokens where a fast hash (SHA-256) is the right tool. Picking one
+// algorithm for both would be wrong in one direction or the other.
+type PasswordHasher interface {
+	Hash(plain string) (string, error)
+	Verify(hash, plain string) bool
+}
