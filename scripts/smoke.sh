@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# End-to-end check against a running Traccia instance (see `make smoke`,
+# which builds/starts docker-compose and tears it down around this).
+set -euo pipefail
+
+BASE_URL="${BASE_URL:-http://localhost:8080}"
+ADMIN_TOKEN="${ADMIN_TOKEN:?set ADMIN_TOKEN to the same value docker-compose is using (see .env)}"
+
+fail() { echo "FAIL: $1" >&2; exit 1; }
+pass() { echo "ok - $1"; }
+
+echo "waiting for $BASE_URL/healthz..."
+ready=false
+for _ in $(seq 1 30); do
+  if curl -sf "$BASE_URL/healthz" >/dev/null 2>&1; then
+    ready=true
+    break
+  fi
+  sleep 1
+done
+[ "$ready" = true ] || fail "server never became healthy after 30s"
+pass "healthz"
+
+CREATE_RESPONSE=$(curl -sf -X POST "$BASE_URL/api/v1/projects" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Smoke Test","domain":"example.com"}') || fail "create project request failed"
+
+PROJECT_ID=$(echo "$CREATE_RESPONSE" | grep -o '"project_id":"[^"]*"' | cut -d'"' -f4)
+API_KEY=$(echo "$CREATE_RESPONSE" | grep -o '"api_key":"[^"]*"' | cut -d'"' -f4)
+[ -n "$PROJECT_ID" ] || fail "no project_id in response: $CREATE_RESPONSE"
+[ -n "$API_KEY" ] || fail "no api_key in response: $CREATE_RESPONSE"
+pass "create project -> $PROJECT_ID"
+
+curl -sf "$BASE_URL/t.js" | grep -q "traccia" || fail "/t.js did not return the tracking script"
+pass "GET /t.js"
+
+track() {
+  local status
+  status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/v1/track" \
+    -H "Content-Type: application/json" -d "$1")
+  [ "$status" = "202" ] || fail "track returned $status for payload: $1"
+}
+
+track "{\"project_id\":\"$PROJECT_ID\",\"visitor_id\":\"11111111-1111-1111-1111-111111111111\",\"path\":\"/\"}"
+pass "track pageview"
+
+track "{\"project_id\":\"$PROJECT_ID\",\"visitor_id\":\"22222222-2222-2222-2222-222222222222\",\"type\":\"custom\",\"name\":\"calculator_used\",\"metadata\":{\"amount\":100}}"
+pass "track custom event"
+
+track "{\"project_id\":\"$PROJECT_ID\",\"visitor_id\":\"33333333-3333-3333-3333-333333333333\",\"type\":\"error\",\"name\":\"unhandled_exception\"}"
+pass "track error event"
+
+IDENTIFY_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/v1/identify" \
+  -H "Content-Type: application/json" \
+  -d "{\"project_id\":\"$PROJECT_ID\",\"visitor_id\":\"11111111-1111-1111-1111-111111111111\",\"name\":\"Antonio (yo mismo)\"}")
+[ "$IDENTIFY_STATUS" = "202" ] || fail "identify returned $IDENTIFY_STATUS"
+pass "identify"
+
+STATS=$(curl -sf "$BASE_URL/api/v1/stats?since=1970-01-01T00:00:00Z" \
+  -H "Authorization: Bearer $API_KEY") || fail "stats request failed"
+echo "$STATS" | grep -q '"total_events":3' || fail "expected total_events=3, got: $STATS"
+pass "stats (no filters) -> total_events=3"
+
+STATS_EXCL=$(curl -sf "$BASE_URL/api/v1/stats?since=1970-01-01T00:00:00Z&exclude_named=true" \
+  -H "Authorization: Bearer $API_KEY") || fail "stats (exclude_named) request failed"
+echo "$STATS_EXCL" | grep -q '"total_events":2' || fail "expected total_events=2 with exclude_named=true, got: $STATS_EXCL"
+pass "stats (exclude_named=true) -> total_events=2"
+
+UNAUTH_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/api/v1/stats")
+[ "$UNAUTH_CODE" = "401" ] || fail "expected 401 for stats without api key, got $UNAUTH_CODE"
+pass "stats without api key -> 401"
+
+echo
+echo "ALL SMOKE CHECKS PASSED"

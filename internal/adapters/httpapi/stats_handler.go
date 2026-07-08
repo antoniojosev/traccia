@@ -24,6 +24,7 @@ func HandleStats(auth *usecase.AuthenticateProject, stats *usecase.GetStats) htt
 			}
 		}
 		in.ExcludeNamed = r.URL.Query().Get("exclude_named") == "true"
+		in.IncludeBots = r.URL.Query().Get("include_bots") == "true"
 
 		result, err := stats.Execute(r.Context(), in)
 		if err != nil {

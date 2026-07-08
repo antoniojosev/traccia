@@ -21,6 +21,7 @@ type GetStatsInput struct {
 	Since        time.Time
 	Until        time.Time
 	ExcludeNamed bool
+	IncludeBots  bool
 }
 
 func (uc *GetStats) Execute(ctx context.Context, in GetStatsInput) (domain.Stats, error) {
@@ -35,5 +36,6 @@ func (uc *GetStats) Execute(ctx context.Context, in GetStatsInput) (domain.Stats
 		Since:        in.Since,
 		Until:        in.Until,
 		ExcludeNamed: in.ExcludeNamed,
+		IncludeBots:  in.IncludeBots,
 	})
 }

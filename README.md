@@ -53,10 +53,16 @@ Or declaratively, without writing JS:
 <button data-traccia-event="signup_clicked">Sign up</button>
 ```
 
-Read stats (requires the secret API key from project creation):
+Read stats (requires the secret API key from project creation). By default,
+bot traffic (detected via user-agent) is excluded and so is anyone you've
+`identify()`'d with a `name`:
 
 ```bash
 curl "http://localhost:8080/api/v1/stats?since=2026-07-01T00:00:00Z" \
+  -H "Authorization: Bearer <api_key>"
+
+# include bots, exclude anyone you've named (e.g. yourself)
+curl "http://localhost:8080/api/v1/stats?include_bots=true&exclude_named=true" \
   -H "Authorization: Bearer <api_key>"
 ```
 
@@ -68,8 +74,9 @@ Two kinds of keys, two trust levels:
   `<script>` tag): identifies which project an event belongs to. It's not a
   secret — anyone who can read your page source can already send it fake
   events, the same tradeoff Google Analytics, Plausible and Umami all make.
-  Rate limiting/bot filtering is the real defense here, not secrecy (not yet
-  implemented — see [Roadmap](#roadmap)).
+  A per-IP rate limit on `/api/v1/track` and `/api/v1/identify` (in-memory,
+  single-node — see `RATE_LIMIT_PER_MINUTE`, default 120/min) is the real
+  defense here, not secrecy.
 - **`api_key`** (shown once on project creation): the only thing gated by
   it is *reading* aggregated stats. It never appears in client-side code.
 
@@ -111,7 +118,6 @@ migrations       plain SQL, applied by Postgres' docker-entrypoint-initdb.d
 - Plugin runtime via an embedded JS interpreter (`goja`) — extension points
   like `onEvent`/`beforeStore`/`onStatsQuery`, so custom logic ships as a
   `.js` file dropped in `plugins/`, no recompilation
-- Rate limiting on `/api/v1/track`
 - MaxMind GeoIP adapter
 
 ## License
