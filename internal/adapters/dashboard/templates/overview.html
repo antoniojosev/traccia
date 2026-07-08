@@ -1,0 +1,83 @@
+{{define "overview-page"}}
+{{template "header" .}}
+<header class="topbar">
+  <span class="brand">Traccia</span>
+  <form method="post" action="/dashboard/logout"><button class="link-button" type="submit">Cerrar sesión</button></form>
+</header>
+<main id="overview">
+{{template "overview-fragment" .}}
+</main>
+{{template "footer" .}}
+{{end}}
+
+{{define "overview-fragment"}}
+<form class="filters" hx-get="/dashboard" hx-target="#overview" hx-trigger="change">
+  <select name="range">
+    <option value="7" {{if eq .RangeDays 7}}selected{{end}}>Últimos 7 días</option>
+    <option value="30" {{if eq .RangeDays 30}}selected{{end}}>Últimos 30 días</option>
+    <option value="90" {{if eq .RangeDays 90}}selected{{end}}>Últimos 90 días</option>
+  </select>
+  <label><input type="checkbox" name="exclude_named" value="true" {{if .ExcludeNamed}}checked{{end}}> Excluir mi tráfico</label>
+  <label><input type="checkbox" name="include_bots" value="true" {{if .IncludeBots}}checked{{end}}> Incluir bots</label>
+</form>
+
+<div class="stat-tiles">
+  <div class="tile"><span class="tile-value">{{.Stats.TotalEvents}}</span><span class="tile-label">Eventos totales</span></div>
+  <div class="tile"><span class="tile-value">{{.Stats.UniqueVisitors}}</span><span class="tile-label">Visitantes únicos</span></div>
+</div>
+
+<div id="timeseries-chart" class="chart" data-points="{{.TimeseriesJSON}}"></div>
+
+<div class="grid">
+  <section>
+    <h2>Top páginas</h2>
+    <table><tbody>
+      {{range .Stats.TopPaths}}<tr><td>{{.Path}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2" class="muted">Sin datos</td></tr>{{end}}
+    </tbody></table>
+  </section>
+  <section>
+    <h2>Referrers</h2>
+    <table><tbody>
+      {{range .Stats.TopReferrers}}<tr><td>{{.Referrer}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2" class="muted">Sin datos</td></tr>{{end}}
+    </tbody></table>
+  </section>
+  <section>
+    <h2>Dispositivos</h2>
+    <table><tbody>
+      {{range .Stats.DeviceTypes}}<tr><td>{{.Name}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2" class="muted">Sin datos</td></tr>{{end}}
+    </tbody></table>
+  </section>
+  <section>
+    <h2>Navegadores</h2>
+    <table><tbody>
+      {{range .Stats.Browsers}}<tr><td>{{.Name}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2" class="muted">Sin datos</td></tr>{{end}}
+    </tbody></table>
+  </section>
+  <section>
+    <h2>Sistemas operativos</h2>
+    <table><tbody>
+      {{range .Stats.OperatingSystems}}<tr><td>{{.Name}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2" class="muted">Sin datos</td></tr>{{end}}
+    </tbody></table>
+  </section>
+  <section>
+    <h2>Eventos custom</h2>
+    <table><tbody>
+      {{range .Stats.CustomEventNames}}<tr><td><a href="#" hx-get="/dashboard/events/custom/{{.Name}}" hx-target="#drilldown" hx-swap="innerHTML">{{.Name}}</a></td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2" class="muted">Sin datos</td></tr>{{end}}
+    </tbody></table>
+  </section>
+  <section>
+    <h2>Errores</h2>
+    <table><tbody>
+      {{range .Stats.ErrorEventNames}}<tr><td><a href="#" hx-get="/dashboard/events/error/{{.Name}}" hx-target="#drilldown" hx-swap="innerHTML">{{.Name}}</a></td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2" class="muted">Sin datos</td></tr>{{end}}
+    </tbody></table>
+  </section>
+  {{range .Panels}}
+  <section>
+    <h2>{{.Title}}</h2>
+    <p class="muted">Panel de plugin — {{.Kind}}</p>
+  </section>
+  {{end}}
+</div>
+
+<div id="drilldown"></div>
+{{end}}

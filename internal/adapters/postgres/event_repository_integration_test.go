@@ -174,3 +174,70 @@ func TestEventRepository_Save_RejectsUnknownProject(t *testing.T) {
 		t.Fatal("expected foreign key violation for unknown project_id, got nil error")
 	}
 }
+
+func TestEventRepository_Stats_BreakdownsAndDrilldown(t *testing.T) {
+	pool := setupTestPool(t)
+	ctx := context.Background()
+	projects := postgres.NewProjectRepository(pool)
+	events := postgres.NewEventRepository(pool)
+
+	project := createTestProject(t, ctx, projects)
+	now := time.Now().UTC()
+
+	must := func(e domain.Event) {
+		t.Helper()
+		if err := events.Save(ctx, e); err != nil {
+			t.Fatalf("saving event: %v", err)
+		}
+	}
+
+	must(domain.Event{
+		ProjectID: project.ID, VisitorID: uuid.NewString(), Type: domain.EventTypePageview,
+		Device: domain.DeviceInfo{DeviceType: "desktop", Browser: "chrome", OS: "linux"}, CreatedAt: now,
+	})
+	must(domain.Event{
+		ProjectID: project.ID, VisitorID: uuid.NewString(), Type: domain.EventTypeCustom, Name: "calculator_used",
+		Metadata: map[string]any{"amount": 100}, CreatedAt: now,
+	})
+	must(domain.Event{
+		ProjectID: project.ID, VisitorID: uuid.NewString(), Type: domain.EventTypeCustom, Name: "calculator_used",
+		Metadata: map[string]any{"amount": 250}, CreatedAt: now,
+	})
+	must(domain.Event{
+		ProjectID: project.ID, VisitorID: uuid.NewString(), Type: domain.EventTypeError, Name: "unhandled_exception",
+		CreatedAt: now,
+	})
+
+	filter := domain.StatsFilter{ProjectID: project.ID, Since: now.Add(-time.Hour), Until: now.Add(time.Hour)}
+	stats, err := events.Stats(ctx, filter)
+	if err != nil {
+		t.Fatalf("querying stats: %v", err)
+	}
+
+	if len(stats.DeviceTypes) != 1 || stats.DeviceTypes[0].Name != "desktop" || stats.DeviceTypes[0].Count != 1 {
+		t.Errorf("expected 1 desktop device, got %+v", stats.DeviceTypes)
+	}
+	if len(stats.CustomEventNames) != 1 || stats.CustomEventNames[0].Name != "calculator_used" || stats.CustomEventNames[0].Count != 2 {
+		t.Errorf("expected calculator_used x2, got %+v", stats.CustomEventNames)
+	}
+	if len(stats.ErrorEventNames) != 1 || stats.ErrorEventNames[0].Name != "unhandled_exception" {
+		t.Errorf("expected 1 error event name, got %+v", stats.ErrorEventNames)
+	}
+
+	samples, err := events.RecentByName(ctx, filter, domain.EventTypeCustom, "calculator_used", 10)
+	if err != nil {
+		t.Fatalf("querying recent by name: %v", err)
+	}
+	if len(samples) != 2 {
+		t.Fatalf("expected 2 samples, got %d", len(samples))
+	}
+	amounts := map[float64]bool{}
+	for _, s := range samples {
+		if amount, ok := s.Metadata["amount"].(float64); ok {
+			amounts[amount] = true
+		}
+	}
+	if !amounts[100] || !amounts[250] {
+		t.Errorf("expected both metadata amounts present, got samples %+v", samples)
+	}
+}
