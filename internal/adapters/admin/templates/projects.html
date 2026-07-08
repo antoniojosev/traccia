@@ -1,0 +1,33 @@
+{{define "admin-projects-page"}}
+{{template "header" .}}
+{{template "nav" .}}
+<main>
+  <div class="page-header">
+    <h1>Proyectos</h1>
+    <a href="/admin/projects/new" class="button">+ Nuevo proyecto</a>
+  </div>
+  <table>
+    <thead>
+      <tr><th scope="col">Nombre</th><th scope="col">Dominio</th><th scope="col">Project ID</th><th scope="col">Creado</th><th scope="col"><span class="visually-hidden">Acciones</span></th></tr>
+    </thead>
+    <tbody>
+      {{range .Projects}}
+      <tr>
+        <td>{{.Name}}</td>
+        <td class="muted">{{.Domain}}</td>
+        <td class="mono">{{.ID}}</td>
+        <td class="muted">{{.CreatedAt}}</td>
+        <td>
+          <form method="post" action="/admin/projects/{{.ID}}/view">
+            <button type="submit" class="link-button">Ver dashboard →</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="5" class="muted">Todavía no hay proyectos. Creá el primero con «+ Nuevo proyecto».</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</main>
+{{template "footer" .}}
+{{end}}

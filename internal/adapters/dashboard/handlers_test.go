@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/antoniojosev/traccia/internal/adapters/dashboard"
+	"github.com/antoniojosev/traccia/internal/adapters/session"
 	"github.com/antoniojosev/traccia/internal/usecase"
 )
 
@@ -31,7 +32,7 @@ func newTestHandlerWithPanels(t *testing.T, panels []dashboard.PanelView) (http.
 		Auth:       usecase.NewAuthenticateProject(projects, fakeKeyHasher{}),
 		GetStats:   usecase.NewGetStats(events),
 		GetSamples: usecase.NewGetEventSamples(events),
-		Sessions:   dashboard.NewSessionManager("test-secret"),
+		Sessions:   session.New("test-secret", "traccia_session", "/dashboard"),
 		Panels:     panels,
 	})
 

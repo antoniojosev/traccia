@@ -17,6 +17,7 @@ import (
 var migrationFiles = []string{
 	"../../../migrations/0001_init.sql",
 	"../../../migrations/0002_plugin_kv.sql",
+	"../../../migrations/0003_admin_users.sql",
 }
 
 // setupTestPool connects to a throwaway Postgres instance and applies the
@@ -48,7 +49,7 @@ func setupTestPool(t *testing.T) *pgxpool.Pool {
 func resetSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 
-	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS events, visitors, projects, plugin_kv CASCADE`); err != nil {
+	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS events, visitors, projects, plugin_kv, admin_users CASCADE`); err != nil {
 		t.Fatalf("dropping tables: %v", err)
 	}
 

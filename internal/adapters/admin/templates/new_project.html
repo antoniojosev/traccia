@@ -1,0 +1,41 @@
+{{define "admin-new-project-page"}}
+{{template "header" .}}
+{{template "nav" .}}
+<main class="narrow">
+  <a href="/admin" class="link-button">← Volver a proyectos</a>
+  <h1>Nuevo proyecto</h1>
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+  <form method="post" action="/admin/projects/new">
+    <label for="name">Nombre
+      <input id="name" type="text" name="name" autocomplete="off" required autofocus>
+    </label>
+    <label for="domain">Dominio (opcional)
+      <input id="domain" type="text" name="domain" autocomplete="off" placeholder="example.com">
+    </label>
+    <button type="submit">Crear proyecto</button>
+  </form>
+</main>
+{{template "footer" .}}
+{{end}}
+
+{{define "admin-project-created-page"}}
+{{template "header" .}}
+{{template "nav" .}}
+<main class="narrow">
+  <a href="/admin" class="link-button">← Volver a proyectos</a>
+  <h1>Proyecto creado</h1>
+  <p class="warning">Esta API key solo se muestra una vez. Guardala ahora — es la que necesitás para leer stats vía API o para que otra persona entre al dashboard.</p>
+  <div class="key-box">
+    <label>API key</label>
+    <code>{{.APIKey}}</code>
+  </div>
+  <div class="key-box">
+    <label>Project ID (público, va en el &lt;script&gt; embebido)</label>
+    <code>{{.ProjectID}}</code>
+  </div>
+  <form method="post" action="/admin/projects/{{.ProjectID}}/view">
+    <button type="submit">Ver dashboard de este proyecto →</button>
+  </form>
+</main>
+{{template "footer" .}}
+{{end}}

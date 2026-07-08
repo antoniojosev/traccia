@@ -39,6 +39,7 @@ func (fakeGeoResolver) Resolve(_ string) domain.GeoInfo {
 type fakeProjectRepo struct {
 	byID   map[string]domain.Project
 	byHash map[string]domain.Project
+	order  []string
 }
 
 func newFakeProjectRepo() *fakeProjectRepo {
@@ -48,6 +49,7 @@ func newFakeProjectRepo() *fakeProjectRepo {
 func (f *fakeProjectRepo) Create(_ context.Context, project domain.Project) error {
 	f.byID[project.ID] = project
 	f.byHash[project.APIKeyHash] = project
+	f.order = append(f.order, project.ID)
 	return nil
 }
 
@@ -65,6 +67,14 @@ func (f *fakeProjectRepo) FindByAPIKeyHash(_ context.Context, hash string) (doma
 		return domain.Project{}, errors.New("not found")
 	}
 	return p, nil
+}
+
+func (f *fakeProjectRepo) List(_ context.Context) ([]domain.Project, error) {
+	out := make([]domain.Project, 0, len(f.order))
+	for _, id := range f.order {
+		out = append(out, f.byID[id])
+	}
+	return out, nil
 }
 
 type fakeKeyHasher struct{}

@@ -1,0 +1,18 @@
+{{define "admin-login-page"}}
+{{template "header" .}}
+<div class="login-box">
+  <h1>Traccia Admin</h1>
+  <p>Entrá con tu cuenta para administrar tus proyectos.</p>
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+  <form method="post" action="/admin/login">
+    <label for="username">Usuario
+      <input id="username" type="text" name="username" value="{{.Username}}" autocomplete="username" spellcheck="false" required autofocus>
+    </label>
+    <label for="password">Contraseña
+      <input id="password" type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit">Entrar</button>
+  </form>
+</div>
+{{template "footer" .}}
+{{end}}

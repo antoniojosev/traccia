@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/antoniojosev/traccia/internal/adapters/session"
 	"github.com/antoniojosev/traccia/internal/domain"
 	"github.com/antoniojosev/traccia/internal/usecase"
 )
@@ -15,7 +16,7 @@ type Deps struct {
 	Auth       *usecase.AuthenticateProject
 	GetStats   *usecase.GetStats
 	GetSamples *usecase.GetEventSamples
-	Sessions   *SessionManager
+	Sessions   *session.Manager
 	// Panels are plugin-declared (see plugins.Manager.Panels), rendered
 	// here in the core so a plugin never ships its own frontend JS — the
 	// reason this dashboard is server-rendered HTMX instead of a SPA.
@@ -47,7 +48,7 @@ const projectIDContextKey contextKey = "traccia.dashboard.project_id"
 
 func requireSession(deps Deps, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		projectID, err := deps.Sessions.ProjectIDFromRequest(r)
+		projectID, err := deps.Sessions.SubjectFromRequest(r)
 		if err != nil {
 			http.Redirect(w, r, "/dashboard/login", http.StatusSeeOther)
 			return
