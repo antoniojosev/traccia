@@ -8,5 +8,6 @@ RUN CGO_ENABLED=0 go build -o /out/traccia ./cmd/api
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates
 COPY --from=build /out/traccia /usr/local/bin/traccia
+WORKDIR /app
 EXPOSE 8080
 ENTRYPOINT ["traccia"]

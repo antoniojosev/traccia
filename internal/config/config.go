@@ -14,6 +14,9 @@ type Config struct {
 	// derives one from AdminToken — fine to get started, but set your own
 	// for production so dashboard sessions don't depend on that secret too.
 	SessionSecret string
+	// PluginsDir is scanned for *.js plugins at boot. A missing directory
+	// is not an error — plugins are optional.
+	PluginsDir string
 }
 
 func Load() Config {
@@ -23,6 +26,7 @@ func Load() Config {
 		AdminToken:         getEnv("ADMIN_TOKEN", ""),
 		RateLimitPerMinute: getEnvInt("RATE_LIMIT_PER_MINUTE", 120),
 		SessionSecret:      getEnv("SESSION_SECRET", ""),
+		PluginsDir:         getEnv("PLUGINS_DIR", "./plugins"),
 	}
 }
 

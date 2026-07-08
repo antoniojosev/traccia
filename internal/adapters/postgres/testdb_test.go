@@ -11,6 +11,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// migrationFiles must list every migration under migrations/, in order —
+// there's no migration runner (see README), so tests apply the exact same
+// files a fresh self-hosted instance would via docker-entrypoint-initdb.d.
+var migrationFiles = []string{
+	"../../../migrations/0001_init.sql",
+	"../../../migrations/0002_plugin_kv.sql",
+}
+
 // setupTestPool connects to a throwaway Postgres instance and applies the
 // real migration file (not a hand-maintained copy of it), so these tests
 // exercise the exact SQL that ships. Point TRACCIA_TEST_DATABASE_URL at a
@@ -40,15 +48,17 @@ func setupTestPool(t *testing.T) *pgxpool.Pool {
 func resetSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 
-	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS events, visitors, projects CASCADE`); err != nil {
+	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS events, visitors, projects, plugin_kv CASCADE`); err != nil {
 		t.Fatalf("dropping tables: %v", err)
 	}
 
-	migration, err := os.ReadFile("../../../migrations/0001_init.sql")
-	if err != nil {
-		t.Fatalf("reading migration file: %v", err)
-	}
-	if _, err := pool.Exec(ctx, string(migration)); err != nil {
-		t.Fatalf("applying migration: %v", err)
+	for _, path := range migrationFiles {
+		migration, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading migration file %s: %v", path, err)
+		}
+		if _, err := pool.Exec(ctx, string(migration)); err != nil {
+			t.Fatalf("applying migration %s: %v", path, err)
+		}
 	}
 }

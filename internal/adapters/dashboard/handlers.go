@@ -16,14 +16,12 @@ type Deps struct {
 	GetStats   *usecase.GetStats
 	GetSamples *usecase.GetEventSamples
 	Sessions   *SessionManager
+	// Panels are plugin-declared (see plugins.Manager.Panels), rendered
+	// here in the core so a plugin never ships its own frontend JS — the
+	// reason this dashboard is server-rendered HTMX instead of a SPA.
+	Panels []PanelView
 }
 
-// PanelView is a plugin-declared panel spec (see the planned goja runtime's
-// registerPanel extension point). It's rendered here, in the core, so a
-// plugin never ships its own frontend JS — this is the reason the
-// dashboard is server-rendered HTMX instead of a SPA. Nothing populates
-// this yet; it's wired through so the plugin runtime doesn't need to touch
-// this template again.
 type PanelView struct {
 	Title string
 	Kind  string
@@ -143,7 +141,7 @@ func handleOverview(deps Deps, tmpl *template.Template) http.HandlerFunc {
 			IncludeBots:    includeBots,
 			Stats:          stats,
 			TimeseriesJSON: string(timeseriesJSON),
-			Panels:         nil,
+			Panels:         deps.Panels,
 		}
 
 		templateName := "overview-page"
