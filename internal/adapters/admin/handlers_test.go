@@ -38,8 +38,12 @@ func newTestHandlerWithLoginLimit(t *testing.T, loginRateLimitPerMinute int) (ht
 		ListProjects:          usecase.NewListProjects(projects),
 		GetProject:            usecase.NewGetProject(projects),
 		DeleteProject:         usecase.NewDeleteProject(projects),
+		UpdateProject:         usecase.NewUpdateProject(projects),
+		RotateAPIKey:          usecase.NewRotateAPIKey(projects, fakeKeyHasher{}),
 		AddAdminUser:          usecase.NewAddAdminUser(adminUsers, fakePasswordHasher{}),
 		ListAdminUsers:        usecase.NewListAdminUsers(adminUsers),
+		GetAdminUser:          usecase.NewGetAdminUser(adminUsers),
+		DeleteAdminUser:       usecase.NewDeleteAdminUser(adminUsers),
 		DashboardSessions:     dashboardSessions,
 		LoginLimiter:          ratelimit.New(loginRateLimitPerMinute),
 	})
@@ -329,6 +333,49 @@ func TestAdmin_ViewProjectRejectsUnknownID(t *testing.T) {
 	}
 }
 
+func TestAdmin_DeletedAdminSessionIsRejectedImmediately(t *testing.T) {
+	handler, _, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	add := usecase.NewAddAdminUser(adminUsers, fakePasswordHasher{})
+	teammate, err := add.Execute(context.Background(), "teammate", "another-long-password")
+	if err != nil {
+		t.Fatalf("seeding teammate: %v", err)
+	}
+
+	form := url.Values{"username": {"teammate"}, "password": {"another-long-password"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	cookies := rec.Result().Cookies()
+	if rec.Code != http.StatusSeeOther || len(cookies) == 0 {
+		t.Fatalf("expected teammate login to succeed, got %d", rec.Code)
+	}
+	teammateCookie := cookies[0]
+
+	// The account still exists, so the session should still work.
+	stillValidReq := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	stillValidReq.AddCookie(teammateCookie)
+	stillValidRec := httptest.NewRecorder()
+	handler.ServeHTTP(stillValidRec, stillValidReq)
+	if stillValidRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 while the account still exists, got %d", stillValidRec.Code)
+	}
+
+	deleteUC := usecase.NewDeleteAdminUser(adminUsers)
+	if err := deleteUC.Execute(context.Background(), teammate.ID); err != nil {
+		t.Fatalf("deleting teammate: %v", err)
+	}
+
+	revokedReq := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	revokedReq.AddCookie(teammateCookie)
+	revokedRec := httptest.NewRecorder()
+	handler.ServeHTTP(revokedRec, revokedReq)
+	if revokedRec.Code != http.StatusSeeOther || revokedRec.Header().Get("Location") != "/admin/login" {
+		t.Fatalf("expected a deleted admin's session to be rejected with a redirect to login, got %d %q", revokedRec.Code, revokedRec.Header().Get("Location"))
+	}
+}
+
 func TestAdmin_LogoutClearsSessionCookie(t *testing.T) {
 	handler, _, adminUsers, _ := newTestHandler(t)
 	seedAdminUser(t, adminUsers)
@@ -518,6 +565,210 @@ func TestAdmin_AddUserCreatesSecondAccount(t *testing.T) {
 	}
 	if len(list) != 2 {
 		t.Fatalf("expected 2 admin users, got %d", len(list))
+	}
+}
+
+func TestAdmin_EditProjectPagePrefillsExistingValues(t *testing.T) {
+	handler, projects, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	create := usecase.NewCreateProject(projects, fakeKeyHasher{})
+	created, _, err := create.Execute(context.Background(), "My Site", "example.com")
+	if err != nil {
+		t.Fatalf("seeding project: %v", err)
+	}
+
+	cookie := adminLoginCookie(t, handler)
+	req := httptest.NewRequest(http.MethodGet, "/admin/projects/"+created.ID+"/edit", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "My Site") || !strings.Contains(rec.Body.String(), "example.com") {
+		t.Errorf("expected prefilled name and domain, got: %s", rec.Body.String())
+	}
+}
+
+func TestAdmin_EditProjectSubmitUpdatesNameAndDomain(t *testing.T) {
+	handler, projects, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	create := usecase.NewCreateProject(projects, fakeKeyHasher{})
+	created, _, err := create.Execute(context.Background(), "My Site", "example.com")
+	if err != nil {
+		t.Fatalf("seeding project: %v", err)
+	}
+
+	cookie := adminLoginCookie(t, handler)
+	form := url.Values{"name": {"Renamed Site"}, "domain": {"renamed.example.com"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/projects/"+created.ID+"/edit", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/admin" {
+		t.Fatalf("expected redirect to /admin, got %d %q: %s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+
+	updated, err := projects.FindByID(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("fetching project: %v", err)
+	}
+	if updated.Name != "Renamed Site" || updated.Domain != "renamed.example.com" {
+		t.Errorf("expected updated fields, got %+v", updated)
+	}
+}
+
+func TestAdmin_EditProjectSubmitRejectsEmptyName(t *testing.T) {
+	handler, projects, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	create := usecase.NewCreateProject(projects, fakeKeyHasher{})
+	created, _, err := create.Execute(context.Background(), "My Site", "example.com")
+	if err != nil {
+		t.Fatalf("seeding project: %v", err)
+	}
+
+	cookie := adminLoginCookie(t, handler)
+	form := url.Values{"name": {""}, "domain": {"example.com"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/projects/"+created.ID+"/edit", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestAdmin_RotateKeyConfirmPageShowsProjectName(t *testing.T) {
+	handler, projects, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	create := usecase.NewCreateProject(projects, fakeKeyHasher{})
+	created, _, err := create.Execute(context.Background(), "My Site", "example.com")
+	if err != nil {
+		t.Fatalf("seeding project: %v", err)
+	}
+
+	cookie := adminLoginCookie(t, handler)
+	req := httptest.NewRequest(http.MethodGet, "/admin/projects/"+created.ID+"/rotate-key", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "My Site") {
+		t.Errorf("expected project name on confirmation page, got: %s", rec.Body.String())
+	}
+}
+
+func TestAdmin_RotateKeySubmitReplacesKeyAndShowsItOnce(t *testing.T) {
+	handler, projects, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	create := usecase.NewCreateProject(projects, fakeKeyHasher{})
+	created, oldKey, err := create.Execute(context.Background(), "My Site", "example.com")
+	if err != nil {
+		t.Fatalf("seeding project: %v", err)
+	}
+
+	cookie := adminLoginCookie(t, handler)
+	req := httptest.NewRequest(http.MethodPost, "/admin/projects/"+created.ID+"/rotate-key", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "plain-key") {
+		t.Errorf("expected the new plaintext API key to be shown, got: %s", rec.Body.String())
+	}
+
+	authenticate := usecase.NewAuthenticateProject(projects, fakeKeyHasher{})
+	if _, err := authenticate.Execute(context.Background(), oldKey); err == nil {
+		t.Error("expected the old API key to no longer authenticate")
+	}
+}
+
+func TestAdmin_DeleteUserConfirmPageShowsUsername(t *testing.T) {
+	handler, _, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	add := usecase.NewAddAdminUser(adminUsers, fakePasswordHasher{})
+	teammate, err := add.Execute(context.Background(), "teammate", "another-long-password")
+	if err != nil {
+		t.Fatalf("seeding teammate: %v", err)
+	}
+
+	cookie := adminLoginCookie(t, handler)
+	req := httptest.NewRequest(http.MethodGet, "/admin/users/"+teammate.ID+"/delete", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "teammate") {
+		t.Errorf("expected username on confirmation page, got: %s", rec.Body.String())
+	}
+}
+
+func TestAdmin_DeleteUserSubmitRemovesAccount(t *testing.T) {
+	handler, _, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	add := usecase.NewAddAdminUser(adminUsers, fakePasswordHasher{})
+	teammate, err := add.Execute(context.Background(), "teammate", "another-long-password")
+	if err != nil {
+		t.Fatalf("seeding teammate: %v", err)
+	}
+
+	cookie := adminLoginCookie(t, handler)
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/"+teammate.ID+"/delete", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/admin/users" {
+		t.Fatalf("expected redirect to /admin/users, got %d %q: %s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+
+	list, err := adminUsers.List(context.Background())
+	if err != nil {
+		t.Fatalf("listing admin users: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 admin user remaining, got %d", len(list))
+	}
+}
+
+func TestAdmin_DeleteUserSubmitRefusesToDeleteLastAdmin(t *testing.T) {
+	handler, _, adminUsers, _ := newTestHandler(t)
+	seedAdminUser(t, adminUsers)
+	only, err := adminUsers.List(context.Background())
+	if err != nil || len(only) != 1 {
+		t.Fatalf("expected exactly one seeded admin, got %v (err %v)", only, err)
+	}
+
+	cookie := adminLoginCookie(t, handler)
+	req := httptest.NewRequest(http.MethodPost, "/admin/users/"+only[0].ID+"/delete", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	list, err := adminUsers.List(context.Background())
+	if err != nil {
+		t.Fatalf("listing admin users: %v", err)
+	}
+	if len(list) != 1 {
+		t.Errorf("expected the last admin to remain, got %d users", len(list))
 	}
 }
 

@@ -40,6 +40,25 @@ func (f *fakeAdminUserRepo) List(_ context.Context) ([]domain.AdminUser, error) 
 	return out, nil
 }
 
+func (f *fakeAdminUserRepo) FindByID(_ context.Context, id string) (domain.AdminUser, error) {
+	for _, u := range f.byUsername {
+		if u.ID == id {
+			return u, nil
+		}
+	}
+	return domain.AdminUser{}, errors.New("not found")
+}
+
+func (f *fakeAdminUserRepo) Delete(_ context.Context, id string) error {
+	for username, u := range f.byUsername {
+		if u.ID == id {
+			delete(f.byUsername, username)
+			return nil
+		}
+	}
+	return errors.New("not found")
+}
+
 type fakePasswordHasher struct{}
 
 func (fakePasswordHasher) Hash(plain string) (string, error) {

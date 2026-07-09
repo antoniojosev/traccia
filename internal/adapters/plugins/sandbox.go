@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -20,15 +20,15 @@ const httpPostTimeout = 5 * time.Second
 func setupSandbox(vm *goja.Runtime, name string, kv KVStore, httpClient *http.Client) {
 	logObj := vm.NewObject()
 	logObj.Set("info", func(call goja.FunctionCall) goja.Value {
-		log.Printf("[plugin:%s] INFO %s", name, call.Argument(0).String())
+		slog.Info(call.Argument(0).String(), "plugin", name)
 		return goja.Undefined()
 	})
 	logObj.Set("warn", func(call goja.FunctionCall) goja.Value {
-		log.Printf("[plugin:%s] WARN %s", name, call.Argument(0).String())
+		slog.Warn(call.Argument(0).String(), "plugin", name)
 		return goja.Undefined()
 	})
 	logObj.Set("error", func(call goja.FunctionCall) goja.Value {
-		log.Printf("[plugin:%s] ERROR %s", name, call.Argument(0).String())
+		slog.Error(call.Argument(0).String(), "plugin", name)
 		return goja.Undefined()
 	})
 	vm.Set("log", logObj)
@@ -45,13 +45,13 @@ func setupSandbox(vm *goja.Runtime, name string, kv KVStore, httpClient *http.Cl
 			defer cancel()
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 			if err != nil {
-				log.Printf("[plugin:%s] http.post: building request: %v", name, err)
+				slog.Warn("plugin http.post: building request", "plugin", name, "error", err)
 				return
 			}
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := httpClient.Do(req)
 			if err != nil {
-				log.Printf("[plugin:%s] http.post: %v", name, err)
+				slog.Warn("plugin http.post", "plugin", name, "error", err)
 				return
 			}
 			resp.Body.Close()
@@ -65,7 +65,7 @@ func setupSandbox(vm *goja.Runtime, name string, kv KVStore, httpClient *http.Cl
 		key := call.Argument(0).String()
 		value, ok, err := kv.Get(context.Background(), name, key)
 		if err != nil {
-			log.Printf("[plugin:%s] kv.get error: %v", name, err)
+			slog.Warn("plugin kv.get", "plugin", name, "error", err)
 			return goja.Undefined()
 		}
 		if !ok {
@@ -77,7 +77,7 @@ func setupSandbox(vm *goja.Runtime, name string, kv KVStore, httpClient *http.Cl
 		key := call.Argument(0).String()
 		value := call.Argument(1).String()
 		if err := kv.Set(context.Background(), name, key, value); err != nil {
-			log.Printf("[plugin:%s] kv.set error: %v", name, err)
+			slog.Warn("plugin kv.set", "plugin", name, "error", err)
 		}
 		return goja.Undefined()
 	})

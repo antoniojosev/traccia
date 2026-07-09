@@ -2,7 +2,7 @@ package plugins
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -82,7 +82,7 @@ func (p *Plugin) callOnEvent(event domain.Event) (domain.Event, bool) {
 	jsEvent := eventToJSValue(p.vm, event)
 	result, err := p.onEvent(goja.Undefined(), jsEvent)
 	if err != nil {
-		log.Printf("[plugin:%s] onEvent error, event kept unchanged: %v", p.name, err)
+		slog.Warn("plugin onEvent error, event kept unchanged", "plugin", p.name, "error", err)
 		return event, true
 	}
 

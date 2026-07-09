@@ -183,6 +183,10 @@ Three trust levels, each gating something different:
   gates creating/listing/deleting *every* project and viewing any of their
   dashboards — the most privileged tier. Separate from `ADMIN_TOKEN`,
   which is the API's own machine credential and never touches the panel.
+  The dashboard's project switcher (top bar, next to "Cerrar sesión")
+  only appears — and only works — when the request also carries a valid
+  admin session; a plain per-project dashboard session (just an `api_key`)
+  can never see or reach another project's data through it.
 
 `/dashboard/login`, `/admin/login` and `/admin/setup` are all rate-limited
 per IP (`LOGIN_RATE_LIMIT_PER_MINUTE`, default 10/min) — the actual
@@ -192,6 +196,24 @@ secrets are otherwise throttled.
 `GET /healthz` checks Postgres connectivity (`pool.Ping`), not just "the
 process is up" — `pgxpool` connects lazily, so without this check the
 server could report healthy before Postgres actually finished booting.
+
+## Backups
+
+Everything lives in one Postgres database (`traccia_pgdata`, the volume in
+`docker-compose.yml`), so backing up is just `pg_dump` against the
+`postgres` service:
+
+```sh
+make backup                                 # writes ./backups/traccia-<UTC timestamp>.dump
+make restore FILE=./backups/traccia-....dump # destructive — drops and recreates every object first
+```
+
+Both wrap `docker compose exec`, so run them from a shell where the stack
+is up (`docker compose up -d`). `pg_dump`'s custom format (`-Fc`) is used,
+which is compressed and safe to restore into a different Postgres version
+than the one that produced it. There's no automated schedule — cron your
+own call to `make backup` (or `scripts/backup.sh` directly) if you want
+one; this project deliberately runs no background jobs of its own.
 
 ## Architecture
 
@@ -248,13 +270,11 @@ plugins-examples reference plugin scripts (not loaded automatically —
   No email/SMTP exists in this project, so a proper "forgot password"
   flow is a bigger addition than it sounds; documented here rather than
   half-built.
-- A project switcher inside the dashboard itself — deliberately not built
-  yet, since the dashboard's trust model (know one project's API key)
-  is intentionally weaker than the admin panel's (know the admin
-  password), and exposing "list of all projects" inside a dashboard
-  session would blur that boundary. Use the admin panel's per-project
-  "Ver dashboard" links to switch instead.
-- CI (GitHub Actions), npm publish for `sdk/js`, a tagged release.
+- npm publish for `sdk/js` — the package is ready under `sdk/js/`, just
+  never pushed to the registry yet.
+- A ClickHouse or SQLite `EventRepository` adapter — the port is already
+  adapter-agnostic (see [Architecture](#architecture)), Postgres is just
+  the only one implemented so far.
 
 ## License
 

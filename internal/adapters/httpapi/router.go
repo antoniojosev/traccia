@@ -29,7 +29,7 @@ func NewRouter(deps Deps) http.Handler {
 
 	mux.HandleFunc("POST /api/v1/track", withCORS(withRateLimit(deps.RateLimiter, HandleTrack(deps.TrackEvent))))
 	mux.HandleFunc("POST /api/v1/identify", withCORS(withRateLimit(deps.RateLimiter, HandleIdentify(deps.IdentifyVisitor))))
-	mux.HandleFunc("GET /api/v1/stats", withCORS(HandleStats(deps.Auth, deps.GetStats)))
+	mux.HandleFunc("GET /api/v1/stats", withCORS(withRateLimit(deps.RateLimiter, HandleStats(deps.Auth, deps.GetStats))))
 	mux.HandleFunc("POST /api/v1/projects", HandleCreateProject(deps.AdminToken, deps.CreateProject))
 
 	// Go's net/http.ServeMux 405s an OPTIONS request against a pattern

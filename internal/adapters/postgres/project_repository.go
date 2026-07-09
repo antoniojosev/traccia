@@ -53,6 +53,22 @@ func (r *ProjectRepository) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+// Update overwrites name, domain and api_key_hash — used for both
+// renaming a project and rotating its API key, since either is just
+// "write these three fields back."
+func (r *ProjectRepository) Update(ctx context.Context, project domain.Project) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE projects SET name = $2, domain = $3, api_key_hash = $4 WHERE id = $1
+	`, project.ID, project.Name, project.Domain, project.APIKeyHash)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrProjectNotFound
+	}
+	return nil
+}
+
 func (r *ProjectRepository) List(ctx context.Context) ([]domain.Project, error) {
 	rows, err := r.pool.Query(ctx, `SELECT id, name, domain, api_key_hash, created_at FROM projects ORDER BY created_at DESC`)
 	if err != nil {

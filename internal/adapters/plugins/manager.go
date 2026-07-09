@@ -1,7 +1,7 @@
 package plugins
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,19 +38,19 @@ func Load(dir string, kv KVStore) (*Manager, error) {
 		path := filepath.Join(dir, entry.Name())
 		source, err := os.ReadFile(path)
 		if err != nil {
-			log.Printf("plugin %s: reading file: %v (skipped)", entry.Name(), err)
+			slog.Warn("plugin: reading file, skipped", "plugin", entry.Name(), "error", err)
 			continue
 		}
 
 		name := strings.TrimSuffix(entry.Name(), ".js")
 		plugin, err := loadPlugin(name, string(source), kv, m.httpClient)
 		if err != nil {
-			log.Printf("plugin %s: %v (skipped)", name, err)
+			slog.Warn("plugin: failed to load, skipped", "plugin", name, "error", err)
 			continue
 		}
 
 		m.plugins = append(m.plugins, plugin)
-		log.Printf("loaded plugin %q (onEvent=%v, panel=%v)", name, plugin.onEvent != nil, plugin.hasPanel)
+		slog.Info("plugin loaded", "plugin", name, "on_event", plugin.onEvent != nil, "panel", plugin.hasPanel)
 	}
 
 	return m, nil

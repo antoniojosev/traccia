@@ -27,8 +27,12 @@ type Deps struct {
 	ListProjects          *usecase.ListProjects
 	GetProject            *usecase.GetProject
 	DeleteProject         *usecase.DeleteProject
+	UpdateProject         *usecase.UpdateProject
+	RotateAPIKey          *usecase.RotateAPIKey
 	AddAdminUser          *usecase.AddAdminUser
 	ListAdminUsers        *usecase.ListAdminUsers
+	GetAdminUser          *usecase.GetAdminUser
+	DeleteAdminUser       *usecase.DeleteAdminUser
 	// DashboardSessions mints a dashboard login session directly — an
 	// admin account already carries more trust than any single project's
 	// API key (which this panel never handles in plaintext anyway), so
@@ -54,8 +58,14 @@ func NewHandler(deps Deps) http.Handler {
 	mux.HandleFunc("POST /admin/projects/{id}/view", requireAdminSession(deps, handleViewProject(deps)))
 	mux.HandleFunc("GET /admin/projects/{id}/delete", requireAdminSession(deps, handleDeleteConfirm(deps, tmpl)))
 	mux.HandleFunc("POST /admin/projects/{id}/delete", requireAdminSession(deps, handleDeleteSubmit(deps)))
+	mux.HandleFunc("GET /admin/projects/{id}/edit", requireAdminSession(deps, handleEditProjectPage(deps, tmpl)))
+	mux.HandleFunc("POST /admin/projects/{id}/edit", requireAdminSession(deps, handleEditProjectSubmit(deps, tmpl)))
+	mux.HandleFunc("GET /admin/projects/{id}/rotate-key", requireAdminSession(deps, handleRotateKeyConfirm(deps, tmpl)))
+	mux.HandleFunc("POST /admin/projects/{id}/rotate-key", requireAdminSession(deps, handleRotateKeySubmit(deps, tmpl)))
 	mux.HandleFunc("GET /admin/users", requireAdminSession(deps, handleUsersList(deps, tmpl)))
 	mux.HandleFunc("POST /admin/users/new", requireAdminSession(deps, handleAddUserSubmit(deps, tmpl)))
+	mux.HandleFunc("GET /admin/users/{id}/delete", requireAdminSession(deps, handleDeleteUserConfirm(deps, tmpl)))
+	mux.HandleFunc("POST /admin/users/{id}/delete", requireAdminSession(deps, handleDeleteUserSubmit(deps)))
 
 	return mux
 }
@@ -84,7 +94,17 @@ func requireAdminSession(deps Deps, next http.HandlerFunc) http.HandlerFunc {
 			http.Redirect(w, r, "/admin/setup", http.StatusSeeOther)
 			return
 		}
-		if _, err := deps.Sessions.SubjectFromRequest(r); err != nil {
+		subject, err := deps.Sessions.SubjectFromRequest(r)
+		if err != nil {
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		// The session cookie is a stateless HMAC token valid for days, so a
+		// deleted account would otherwise keep working until it expires —
+		// re-check against the database on every request to revoke access
+		// immediately when an admin is removed.
+		if _, err := deps.GetAdminUser.Execute(r.Context(), subject); err != nil {
+			deps.Sessions.ClearCookie(w)
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
@@ -330,7 +350,103 @@ func handleDeleteSubmit(deps Deps) http.HandlerFunc {
 	}
 }
 
+type editProjectView struct {
+	nav
+	ID     string
+	Name   string
+	Domain string
+	Error  string
+}
+
+func handleEditProjectPage(deps Deps, tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		project, err := deps.GetProject.Execute(r.Context(), id)
+		if err != nil {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+		tmpl.ExecuteTemplate(w, "admin-edit-project-page", editProjectView{
+			nav: nav{Active: "proyectos"}, ID: project.ID, Name: project.Name, Domain: project.Domain,
+		})
+	}
+}
+
+func handleEditProjectSubmit(deps Deps, tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if _, err := deps.GetProject.Execute(r.Context(), id); err != nil {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+
+		name := r.FormValue("name")
+		domainName := r.FormValue("domain")
+		if _, err := deps.UpdateProject.Execute(r.Context(), id, name, domainName); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			tmpl.ExecuteTemplate(w, "admin-edit-project-page", editProjectView{
+				nav: nav{Active: "proyectos"}, ID: id, Name: name, Domain: domainName,
+				Error: "El nombre es obligatorio.",
+			})
+			return
+		}
+
+		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	}
+}
+
+type rotateKeyConfirmView struct {
+	nav
+	ID   string
+	Name string
+}
+
+func handleRotateKeyConfirm(deps Deps, tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		project, err := deps.GetProject.Execute(r.Context(), id)
+		if err != nil {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+		tmpl.ExecuteTemplate(w, "admin-rotate-key-confirm-page", rotateKeyConfirmView{
+			nav: nav{Active: "proyectos"}, ID: project.ID, Name: project.Name,
+		})
+	}
+}
+
+type keyRotatedView struct {
+	nav
+	ProjectID string
+	APIKey    string
+}
+
+func handleRotateKeySubmit(deps Deps, tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if _, err := deps.GetProject.Execute(r.Context(), id); err != nil {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+
+		newKey, err := deps.RotateAPIKey.Execute(r.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		tmpl.ExecuteTemplate(w, "admin-key-rotated-page", keyRotatedView{
+			nav: nav{Active: "proyectos"}, ProjectID: id, APIKey: newKey,
+		})
+	}
+}
+
 type adminUserView struct {
+	ID        string
 	Username  string
 	CreatedAt string
 }
@@ -355,7 +471,7 @@ func renderUsersList(ctx context.Context, w http.ResponseWriter, tmpl *template.
 		return
 	}
 	for _, u := range users {
-		view.Users = append(view.Users, adminUserView{Username: u.Username, CreatedAt: u.CreatedAt.Format("2006-01-02 15:04")})
+		view.Users = append(view.Users, adminUserView{ID: u.ID, Username: u.Username, CreatedAt: u.CreatedAt.Format("2006-01-02 15:04")})
 	}
 	w.WriteHeader(status)
 	tmpl.ExecuteTemplate(w, "admin-users-page", view)
@@ -380,6 +496,46 @@ func handleAddUserSubmit(deps Deps, tmpl *template.Template) http.HandlerFunc {
 			return
 		}
 
+		http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
+	}
+}
+
+type deleteUserConfirmView struct {
+	nav
+	ID       string
+	Username string
+	Error    string
+}
+
+func handleDeleteUserConfirm(deps Deps, tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		user, err := deps.GetAdminUser.Execute(r.Context(), id)
+		if err != nil {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		tmpl.ExecuteTemplate(w, "admin-delete-user-confirm-page", deleteUserConfirmView{
+			nav: nav{Active: "usuarios"}, ID: user.ID, Username: user.Username,
+		})
+	}
+}
+
+func handleDeleteUserSubmit(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if _, err := deps.GetAdminUser.Execute(r.Context(), id); err != nil {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		if err := deps.DeleteAdminUser.Execute(r.Context(), id); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, usecase.ErrCannotDeleteLastAdmin) {
+				status = http.StatusBadRequest
+			}
+			http.Error(w, err.Error(), status)
+			return
+		}
 		http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 	}
 }

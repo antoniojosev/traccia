@@ -1,4 +1,4 @@
-.PHONY: test test-integration smoke
+.PHONY: test test-integration smoke backup restore
 
 test:
 	go test ./...
@@ -28,3 +28,12 @@ smoke:
 		./scripts/smoke.sh; status=$$?; \
 		docker compose down -v; \
 		exit $$status
+
+# Dumps the running docker-compose Postgres to ./backups/traccia-<UTC timestamp>.dump.
+backup:
+	./scripts/backup.sh
+
+# Restores a dump into the running docker-compose Postgres. Destructive —
+# see scripts/restore.sh. Usage: make restore FILE=./backups/traccia-....dump
+restore:
+	./scripts/restore.sh $(FILE)

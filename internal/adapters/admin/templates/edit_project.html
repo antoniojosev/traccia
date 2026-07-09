@@ -1,0 +1,19 @@
+{{define "admin-edit-project-page"}}
+{{template "header" .}}
+{{template "nav" .}}
+<main class="narrow">
+  <a href="/admin" class="link-button">← Volver a proyectos</a>
+  <h1>Editar proyecto</h1>
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+  <form method="post" action="/admin/projects/{{.ID}}/edit">
+    <label for="name">Nombre
+      <input id="name" type="text" name="name" value="{{.Name}}" autocomplete="off" required autofocus>
+    </label>
+    <label for="domain">Dominio (opcional)
+      <input id="domain" type="text" name="domain" value="{{.Domain}}" autocomplete="off" placeholder="example.com">
+    </label>
+    <button type="submit">Guardar cambios</button>
+  </form>
+</main>
+{{template "footer" .}}
+{{end}}

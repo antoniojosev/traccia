@@ -29,6 +29,11 @@ type ProjectRepository interface {
 	FindByAPIKeyHash(ctx context.Context, apiKeyHash string) (domain.Project, error)
 	List(ctx context.Context) ([]domain.Project, error)
 	Delete(ctx context.Context, id string) error
+	// Update overwrites name, domain and api_key_hash for an existing
+	// project — the same method backs both renaming (hash unchanged) and
+	// API key rotation (name/domain unchanged), since both are just "write
+	// the full row back."
+	Update(ctx context.Context, project domain.Project) error
 }
 
 // VisitorRepository stores the durable identity set via Identify, keyed by
@@ -62,9 +67,11 @@ type APIKeyHasher interface {
 // from ProjectRepository, which is per-tenant API access.
 type AdminUserRepository interface {
 	Create(ctx context.Context, user domain.AdminUser) error
+	FindByID(ctx context.Context, id string) (domain.AdminUser, error)
 	FindByUsername(ctx context.Context, username string) (domain.AdminUser, error)
 	Count(ctx context.Context) (int, error)
 	List(ctx context.Context) ([]domain.AdminUser, error)
+	Delete(ctx context.Context, id string) error
 }
 
 // PasswordHasher hashes and verifies human passwords. Deliberately a

@@ -21,6 +21,8 @@
           <form method="post" action="/admin/projects/{{.ID}}/view">
             <button type="submit" class="link-button">Ver dashboard →</button>
           </form>
+          <a href="/admin/projects/{{.ID}}/edit" class="link-button">Editar</a>
+          <a href="/admin/projects/{{.ID}}/rotate-key" class="link-button">Rotar API key</a>
           <a href="/admin/projects/{{.ID}}/delete" class="link-button danger">Eliminar</a>
         </td>
       </tr>

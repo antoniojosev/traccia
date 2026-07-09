@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/antoniojosev/traccia/internal/adapters/admin"
 	"github.com/antoniojosev/traccia/internal/adapters/apikey"
@@ -25,22 +27,26 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	cfg := config.Load()
 	if cfg.DatabaseURL == "" {
-		log.Fatal("DATABASE_URL is required")
+		slog.Error("DATABASE_URL is required")
+		os.Exit(1)
 	}
 	if cfg.AdminToken == "" {
-		log.Println("warning: ADMIN_TOKEN is not set, POST /api/v1/projects is unreachable")
+		slog.Warn("ADMIN_TOKEN is not set, POST /api/v1/projects is unreachable")
 	}
 	if cfg.SessionSecret == "" {
 		cfg.SessionSecret = deriveSessionSecret(cfg.AdminToken)
-		log.Println("warning: SESSION_SECRET is not set, deriving one from ADMIN_TOKEN — set your own for production")
+		slog.Warn("SESSION_SECRET is not set, deriving one from ADMIN_TOKEN — set your own for production")
 	}
 
 	ctx := context.Background()
 	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("connecting to postgres: %v", err)
+		slog.Error("connecting to postgres", "error", err)
+		os.Exit(1)
 	}
 	defer pool.Close()
 
@@ -58,7 +64,8 @@ func main() {
 
 	pluginManager, err := plugins.Load(cfg.PluginsDir, pluginKV)
 	if err != nil {
-		log.Fatalf("loading plugins from %s: %v", cfg.PluginsDir, err)
+		slog.Error("loading plugins", "dir", cfg.PluginsDir, "error", err)
+		os.Exit(1)
 	}
 
 	// Every usecase depends on ports.EventRepository, not Postgres directly
@@ -81,6 +88,7 @@ func main() {
 	})
 
 	dashboardSessions := session.New(cfg.SessionSecret, "traccia_session", "/dashboard")
+	adminSessions := session.New(cfg.SessionSecret, "traccia_admin_session", "/admin")
 	dashboardHandler := dashboard.NewHandler(dashboard.Deps{
 		Auth:                 auth,
 		GetStats:             getStats,
@@ -89,10 +97,13 @@ func main() {
 		Sessions:             dashboardSessions,
 		LoginLimiter:         ratelimit.New(cfg.LoginRateLimitPerMinute),
 		Panels:               dashboardPanels(pluginManager),
+		AdminSessions:        adminSessions,
+		ListProjects:         usecase.NewListProjects(projects),
+		GetProject:           usecase.NewGetProject(projects),
 	})
 
 	adminHandler := admin.NewHandler(admin.Deps{
-		Sessions:              session.New(cfg.SessionSecret, "traccia_admin_session", "/admin"),
+		Sessions:              adminSessions,
 		RegisterAdminUser:     usecase.NewRegisterAdminUser(adminUsers, passwordHasher),
 		AuthenticateAdminUser: usecase.NewAuthenticateAdminUser(adminUsers, passwordHasher),
 		NeedsSetup:            usecase.NewNeedsAdminSetup(adminUsers),
@@ -100,8 +111,12 @@ func main() {
 		ListProjects:          usecase.NewListProjects(projects),
 		GetProject:            usecase.NewGetProject(projects),
 		DeleteProject:         usecase.NewDeleteProject(projects),
+		UpdateProject:         usecase.NewUpdateProject(projects),
+		RotateAPIKey:          usecase.NewRotateAPIKey(projects, keyHasher),
 		AddAdminUser:          usecase.NewAddAdminUser(adminUsers, passwordHasher),
 		ListAdminUsers:        usecase.NewListAdminUsers(adminUsers),
+		GetAdminUser:          usecase.NewGetAdminUser(adminUsers),
+		DeleteAdminUser:       usecase.NewDeleteAdminUser(adminUsers),
 		DashboardSessions:     dashboardSessions,
 		LoginLimiter:          ratelimit.New(cfg.LoginRateLimitPerMinute),
 	})
@@ -117,10 +132,37 @@ func main() {
 	mux.Handle("/admin/", adminHandler)
 	mux.Handle("/", apiRouter)
 
-	log.Printf("traccia listening on :%s", cfg.Port)
-	if err := http.ListenAndServe(":"+cfg.Port, mux); err != nil {
-		log.Fatal(err)
+	slog.Info("traccia listening", "port", cfg.Port)
+	if err := http.ListenAndServe(":"+cfg.Port, requestLogger(mux)); err != nil {
+		slog.Error("server stopped", "error", err)
+		os.Exit(1)
 	}
+}
+
+// statusRecorder captures the status code a handler wrote, since
+// http.ResponseWriter doesn't expose it after the fact.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		slog.Info("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rec.status,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+	})
 }
 
 // loadGeoResolver returns a MaxMind-backed resolver if GEOIP_DB_PATH is
@@ -133,10 +175,10 @@ func loadGeoResolver(dbPath string) ports.GeoResolver {
 	}
 	resolver, err := geoip.NewMaxMindResolver(dbPath)
 	if err != nil {
-		log.Printf("warning: could not open GeoIP database at %s: %v — country/city will stay unresolved", dbPath, err)
+		slog.Warn("could not open GeoIP database, country/city will stay unresolved", "path", dbPath, "error", err)
 		return geoip.NewNoopResolver()
 	}
-	log.Printf("resolving GeoIP from %s", dbPath)
+	slog.Info("resolving GeoIP", "path", dbPath)
 	return resolver
 }
 

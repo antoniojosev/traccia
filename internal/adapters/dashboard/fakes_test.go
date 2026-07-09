@@ -73,6 +73,17 @@ func (f *fakeProjectRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeProjectRepo) Update(_ context.Context, project domain.Project) error {
+	existing, ok := f.byID[project.ID]
+	if !ok {
+		return errors.New("not found")
+	}
+	delete(f.byHash, existing.APIKeyHash)
+	f.byID[project.ID] = project
+	f.byHash[project.APIKeyHash] = project
+	return nil
+}
+
 func (f *fakeProjectRepo) FindByID(_ context.Context, id string) (domain.Project, error) {
 	p, ok := f.byID[id]
 	if !ok {

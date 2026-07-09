@@ -36,6 +36,33 @@ func newTestRouterWithPing(t *testing.T, rateLimitPerMinute int, ping func(conte
 	})
 }
 
+// newTestRouterWithProject builds a router with the given stats rate limit
+// and returns an API key valid against it, so rate-limit tests can reach
+// the authenticated /api/v1/stats path.
+func newTestRouterWithProject(t *testing.T, rateLimitPerMinute int) (http.Handler, string) {
+	t.Helper()
+	projects := newFakeProjectRepo()
+	events := &fakeEventRepo{}
+	visitors := &fakeVisitorRepo{}
+	create := usecase.NewCreateProject(projects, fakeKeyHasher{})
+
+	_, apiKey, err := create.Execute(context.Background(), "Test Site", "example.com")
+	if err != nil {
+		t.Fatalf("seeding project: %v", err)
+	}
+
+	router := httpapi.NewRouter(httpapi.Deps{
+		AdminToken:      "admin-token",
+		Auth:            usecase.NewAuthenticateProject(projects, fakeKeyHasher{}),
+		CreateProject:   create,
+		TrackEvent:      usecase.NewTrackEvent(events, fakeUAParser{}, fakeGeoResolver{}),
+		IdentifyVisitor: usecase.NewIdentifyVisitor(visitors),
+		GetStats:        usecase.NewGetStats(events),
+		RateLimiter:     ratelimit.New(rateLimitPerMinute),
+	})
+	return router, apiKey
+}
+
 func TestRouter_CORSPreflight(t *testing.T) {
 	router := newTestRouter(t, 120)
 
@@ -69,6 +96,29 @@ func TestRouter_RateLimitReturns429WhenExceeded(t *testing.T) {
 	router.ServeHTTP(rec2, second)
 	if rec2.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected second request to be rate limited with 429, got %d", rec2.Code)
+	}
+}
+
+func TestRouter_StatsIsRateLimitedPerIP(t *testing.T) {
+	router, apiKey := newTestRouterWithProject(t, 1) // burst of 1
+
+	newReq := func() *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.RemoteAddr = "203.0.113.20:1234"
+		return req
+	}
+
+	first := httptest.NewRecorder()
+	router.ServeHTTP(first, newReq())
+	if first.Code != http.StatusOK {
+		t.Fatalf("expected first request to succeed with 200, got %d: %s", first.Code, first.Body.String())
+	}
+
+	second := httptest.NewRecorder()
+	router.ServeHTTP(second, newReq())
+	if second.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected second request to be rate limited with 429, got %d", second.Code)
 	}
 }
 

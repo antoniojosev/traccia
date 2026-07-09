@@ -1,0 +1,28 @@
+{{define "admin-rotate-key-confirm-page"}}
+{{template "header" .}}
+{{template "nav" .}}
+<main class="narrow">
+  <a href="/admin" class="link-button">← Volver a proyectos</a>
+  <h1>Rotar API key de «{{.Name}}»</h1>
+  <p class="warning">La API key actual dejará de funcionar de inmediato. Cualquier integración que la use (lectura de stats vía API) necesitará la nueva.</p>
+  <form method="post" action="/admin/projects/{{.ID}}/rotate-key">
+    <button type="submit" class="button danger">Sí, rotar la API key de «{{.Name}}»</button>
+  </form>
+</main>
+{{template "footer" .}}
+{{end}}
+
+{{define "admin-key-rotated-page"}}
+{{template "header" .}}
+{{template "nav" .}}
+<main class="narrow">
+  <a href="/admin" class="link-button">← Volver a proyectos</a>
+  <h1>API key rotada</h1>
+  <p class="warning">Esta API key solo se muestra una vez. Guardala ahora — la anterior ya no funciona.</p>
+  <div class="key-box">
+    <label>API key</label>
+    <code>{{.APIKey}}</code>
+  </div>
+</main>
+{{template "footer" .}}
+{{end}}

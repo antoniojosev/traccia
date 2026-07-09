@@ -39,6 +39,29 @@ func (r *AdminUserRepository) FindByUsername(ctx context.Context, username strin
 	return u, err
 }
 
+func (r *AdminUserRepository) FindByID(ctx context.Context, id string) (domain.AdminUser, error) {
+	var u domain.AdminUser
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, username, password_hash, created_at FROM admin_users WHERE id = $1`,
+		id,
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.AdminUser{}, ErrAdminUserNotFound
+	}
+	return u, err
+}
+
+func (r *AdminUserRepository) Delete(ctx context.Context, id string) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM admin_users WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrAdminUserNotFound
+	}
+	return nil
+}
+
 func (r *AdminUserRepository) Count(ctx context.Context) (int, error) {
 	var count int
 	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_users`).Scan(&count)

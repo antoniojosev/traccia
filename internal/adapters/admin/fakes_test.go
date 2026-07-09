@@ -3,6 +3,8 @@ package admin_test
 import (
 	"context"
 	"errors"
+	"strconv"
+	"sync/atomic"
 
 	"github.com/antoniojosev/traccia/internal/domain"
 )
@@ -62,10 +64,30 @@ func (f *fakeProjectRepo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeProjectRepo) Update(_ context.Context, project domain.Project) error {
+	existing, ok := f.byID[project.ID]
+	if !ok {
+		return errors.New("not found")
+	}
+	delete(f.byHash, existing.APIKeyHash)
+	f.byID[project.ID] = project
+	f.byHash[project.APIKeyHash] = project
+	return nil
+}
+
+// fakeKeyCounter backs fakeKeyHasher.Generate with a package-level counter
+// (rather than per-instance) so a distinct key comes back every call even
+// when tests construct separate fakeKeyHasher values for seeding vs. for
+// the handler under test — a fixed return value would make "the old key no
+// longer works" assertions vacuously true.
+var fakeKeyCounter int32
+
 type fakeKeyHasher struct{}
 
 func (fakeKeyHasher) Generate() (plainKey string, hash string, err error) {
-	return "plain-key", "hash-of-plain-key", nil
+	n := atomic.AddInt32(&fakeKeyCounter, 1)
+	plainKey = "plain-key-" + strconv.Itoa(int(n))
+	return plainKey, "hash-of-" + plainKey, nil
 }
 
 func (fakeKeyHasher) Hash(plainKey string) string {
@@ -105,6 +127,31 @@ func (f *fakeAdminUserRepo) List(_ context.Context) ([]domain.AdminUser, error) 
 		out = append(out, f.byUsername[username])
 	}
 	return out, nil
+}
+
+func (f *fakeAdminUserRepo) FindByID(_ context.Context, id string) (domain.AdminUser, error) {
+	for _, u := range f.byUsername {
+		if u.ID == id {
+			return u, nil
+		}
+	}
+	return domain.AdminUser{}, errors.New("not found")
+}
+
+func (f *fakeAdminUserRepo) Delete(_ context.Context, id string) error {
+	for username, u := range f.byUsername {
+		if u.ID == id {
+			delete(f.byUsername, username)
+			for i, oid := range f.order {
+				if oid == username {
+					f.order = append(f.order[:i], f.order[i+1:]...)
+					break
+				}
+			}
+			return nil
+		}
+	}
+	return errors.New("not found")
 }
 
 type fakePasswordHasher struct{}

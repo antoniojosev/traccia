@@ -29,6 +29,18 @@ type Deps struct {
 	// SPA. Rows are computed fresh per request in handleOverview, not
 	// stored here — this slice is shared across every request.
 	Panels []PanelView
+	// AdminSessions, ListProjects and GetProject back the project switcher
+	// shown in the topbar — deliberately gated on a valid *admin* session,
+	// not the dashboard's own per-project one. A single project's API key
+	// must never let its holder jump into another project's dashboard;
+	// only someone who already holds the more privileged admin session
+	// can. handleSwitchProject re-checks this itself server-side, so
+	// leaving these nil (or a plain per-project dashboard deployment with
+	// no admin panel wired up) just hides the switcher rather than weaken
+	// anything.
+	AdminSessions *session.Manager
+	ListProjects  *usecase.ListProjects
+	GetProject    *usecase.GetProject
 }
 
 // PanelView is a plugin-declared panel spec. EventName/GroupBy come
@@ -54,6 +66,10 @@ func NewHandler(deps Deps) http.Handler {
 	mux.HandleFunc("POST /dashboard/logout", handleLogout(deps))
 	mux.HandleFunc("GET /dashboard", requireSession(deps, handleOverview(deps, tmpl)))
 	mux.HandleFunc("GET /dashboard/events/{type}/{name}", requireSession(deps, handleEventDrilldown(deps, tmpl)))
+	// Deliberately not wrapped in requireSession: switching projects is an
+	// admin-session privilege, independent of which (if any) project's
+	// dashboard session the caller currently holds — see handleSwitchProject.
+	mux.HandleFunc("POST /dashboard/switch", handleSwitchProject(deps))
 	mux.Handle("GET /dashboard/static/", staticHandler())
 
 	return mux
@@ -126,13 +142,23 @@ func handleLogout(deps Deps) http.HandlerFunc {
 	}
 }
 
+type projectOption struct {
+	ID   string
+	Name string
+}
+
 type overviewView struct {
-	RangeDays      int
-	ExcludeNamed   bool
-	IncludeBots    bool
-	Stats          domain.Stats
-	TimeseriesJSON string
-	Panels         []PanelView
+	RangeDays        int
+	ExcludeNamed     bool
+	IncludeBots      bool
+	Stats            domain.Stats
+	TimeseriesJSON   string
+	Panels           []PanelView
+	CurrentProjectID string
+	// Projects is only populated when the request also carries a valid
+	// admin session — see Deps.AdminSessions. An empty slice hides the
+	// switcher in the template, it never renders a broken one.
+	Projects []projectOption
 }
 
 func handleOverview(deps Deps, tmpl *template.Template) http.HandlerFunc {
@@ -164,21 +190,85 @@ func handleOverview(deps Deps, tmpl *template.Template) http.HandlerFunc {
 		}
 
 		view := overviewView{
-			RangeDays:      rangeDays,
-			ExcludeNamed:   excludeNamed,
-			IncludeBots:    includeBots,
-			Stats:          stats,
-			TimeseriesJSON: string(timeseriesJSON),
-			Panels:         computePanelRows(r.Context(), deps, projectID, since, until),
+			RangeDays:        rangeDays,
+			ExcludeNamed:     excludeNamed,
+			IncludeBots:      includeBots,
+			Stats:            stats,
+			TimeseriesJSON:   string(timeseriesJSON),
+			Panels:           computePanelRows(r.Context(), deps, projectID, since, until),
+			CurrentProjectID: projectID,
 		}
 
 		templateName := "overview-page"
 		if r.Header.Get("HX-Request") == "true" {
 			templateName = "overview-fragment"
+		} else {
+			// Only the full page renders the topbar switcher — skip the
+			// extra ListProjects call on every HTMX filter refresh.
+			view.Projects = switcherProjects(r, deps)
 		}
 		if err := tmpl.ExecuteTemplate(w, templateName, view); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
+	}
+}
+
+// switcherProjects returns every project for the topbar switcher, but only
+// when the request also carries a valid *admin* session — a dashboard
+// session alone (a single project's API key) must never be enough to see
+// or reach any other project. Returns nil (hides the switcher) whenever
+// the admin panel isn't wired up (AdminSessions/ListProjects nil, e.g. a
+// deployment using only this package without internal/adapters/admin) or
+// the caller isn't an admin.
+func switcherProjects(r *http.Request, deps Deps) []projectOption {
+	if deps.AdminSessions == nil || deps.ListProjects == nil {
+		return nil
+	}
+	if _, err := deps.AdminSessions.SubjectFromRequest(r); err != nil {
+		return nil
+	}
+
+	projects, err := deps.ListProjects.Execute(r.Context())
+	if err != nil {
+		return nil
+	}
+
+	options := make([]projectOption, 0, len(projects))
+	for _, p := range projects {
+		options = append(options, projectOption{ID: p.ID, Name: p.Name})
+	}
+	return options
+}
+
+// handleSwitchProject mints a dashboard session for another project on an
+// admin's behalf — deliberately independent of requireSession. The only
+// credential that matters here is the admin session, re-verified server
+// side rather than trusted from the UI having merely hidden the form: the
+// switcher being absent from the rendered page is a convenience, not the
+// security boundary.
+func handleSwitchProject(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.AdminSessions == nil || deps.GetProject == nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if _, err := deps.AdminSessions.SubjectFromRequest(r); err != nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+
+		id := r.FormValue("project_id")
+		if _, err := deps.GetProject.Execute(r.Context(), id); err != nil {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+
+		deps.Sessions.SetCookie(w, id)
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 	}
 }
 

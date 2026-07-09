@@ -5,10 +5,14 @@
   <a href="/admin" class="link-button">← Volver a proyectos</a>
   <h1>Usuarios admin</h1>
   <table>
-    <thead><tr><th scope="col">Usuario</th><th scope="col">Creado</th></tr></thead>
+    <thead><tr><th scope="col">Usuario</th><th scope="col">Creado</th><th scope="col"><span class="visually-hidden">Acciones</span></th></tr></thead>
     <tbody>
       {{range .Users}}
-      <tr><td>{{.Username}}</td><td class="muted">{{.CreatedAt}}</td></tr>
+      <tr>
+        <td>{{.Username}}</td>
+        <td class="muted">{{.CreatedAt}}</td>
+        <td class="row-actions"><a href="/admin/users/{{.ID}}/delete" class="link-button danger">Eliminar</a></td>
+      </tr>
       {{end}}
     </tbody>
   </table>
@@ -23,6 +27,21 @@
       <input id="password" type="password" name="password" autocomplete="new-password" required minlength="8">
     </label>
     <button type="submit">Crear usuario</button>
+  </form>
+</main>
+{{template "footer" .}}
+{{end}}
+
+{{define "admin-delete-user-confirm-page"}}
+{{template "header" .}}
+{{template "nav" .}}
+<main class="narrow">
+  <a href="/admin/users" class="link-button">← Volver a usuarios</a>
+  <h1>Eliminar usuario «{{.Username}}»</h1>
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+  <p class="warning">Esta persona perderá acceso al panel de inmediato.</p>
+  <form method="post" action="/admin/users/{{.ID}}/delete">
+    <button type="submit" class="button danger">Sí, eliminar «{{.Username}}»</button>
   </form>
 </main>
 {{template "footer" .}}

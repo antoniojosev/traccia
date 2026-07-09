@@ -8,6 +8,17 @@
     </nav>
   </div>
   <div class="topbar-actions">
+    {{if .Projects}}
+    <form method="post" action="/dashboard/switch" class="switcher">
+      <label for="project_id" class="visually-hidden">Cambiar de proyecto</label>
+      <select id="project_id" name="project_id" onchange="this.form.submit()">
+        {{range .Projects}}
+        <option value="{{.ID}}" {{if eq .ID $.CurrentProjectID}}selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+      <button type="submit" class="link-button">Ir</button>
+    </form>
+    {{end}}
     <form method="post" action="/dashboard/logout"><button class="link-button" type="submit">Cerrar sesión</button></form>
   </div>
 </header>

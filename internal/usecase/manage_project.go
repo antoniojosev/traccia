@@ -40,6 +40,36 @@ func (uc *CreateProject) Execute(ctx context.Context, name, domainName string) (
 	return project, plainKey, nil
 }
 
+// RotateAPIKey mints a fresh API key for an existing project and
+// immediately invalidates the old one — the returned plaintext key is
+// shown exactly once, same as CreateProject.
+type RotateAPIKey struct {
+	Projects ports.ProjectRepository
+	Keys     ports.APIKeyHasher
+}
+
+func NewRotateAPIKey(projects ports.ProjectRepository, keys ports.APIKeyHasher) *RotateAPIKey {
+	return &RotateAPIKey{Projects: projects, Keys: keys}
+}
+
+func (uc *RotateAPIKey) Execute(ctx context.Context, id string) (plainKey string, err error) {
+	project, err := uc.Projects.FindByID(ctx, id)
+	if err != nil {
+		return "", err
+	}
+
+	plainKey, hash, err := uc.Keys.Generate()
+	if err != nil {
+		return "", err
+	}
+
+	project.APIKeyHash = hash
+	if err := uc.Projects.Update(ctx, project); err != nil {
+		return "", err
+	}
+	return plainKey, nil
+}
+
 type AuthenticateProject struct {
 	Projects ports.ProjectRepository
 	Keys     ports.APIKeyHasher
