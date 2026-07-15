@@ -1,0 +1,81 @@
+# Production compose for PaaS-style deploys (Dokploy, Coolify, plain VPS).
+#
+# Differences from docker-compose.yml (the local/dev stack):
+#   - Postgres is NOT published to the host — it is only reachable on the
+#     internal compose network. On a public VPS, publishing 5432 means
+#     exposing the database to the internet.
+#   - The app publishes no port either; it joins the external
+#     `dokploy-network` so Dokploy's Traefik can route a domain to it
+#     (Domains -> service `traccia`, port 8080). On a non-Dokploy host,
+#     remove that network and put your own reverse proxy in front.
+#   - POSTGRES_PASSWORD comes from the environment instead of a hardcoded
+#     default, and it must match DATABASE_URL below.
+#
+# Required env (set in Dokploy's Environment tab or a .env file):
+#   ADMIN_TOKEN        machine credential for POST /api/v1/projects
+#   SESSION_SECRET     signs dashboard/admin login cookies
+#   POSTGRES_PASSWORD  database password (also embedded in DATABASE_URL)
+#
+# Migrations in migrations/ are applied by Postgres itself on the FIRST
+# boot of a fresh volume (docker-entrypoint-initdb.d) — nothing to run by
+# hand on initial deploy.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: traccia
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: traccia
+    volumes:
+      - traccia_pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U traccia"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  traccia:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        # pg_isready only succeeds once initdb.d migrations finished —
+        # same race documented in docker-compose.yml.
+        condition: service_healthy
+    environment:
+      PORT: 8080
+      DATABASE_URL: postgres://traccia:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/traccia?sslmode=disable
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in production}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-120}
+      LOGIN_RATE_LIMIT_PER_MINUTE: ${LOGIN_RATE_LIMIT_PER_MINUTE:-10}
+      PLUGINS_DIR: /app/plugins
+      GEOIP_DB_PATH: ${GEOIP_DB_PATH:-}
+    volumes:
+      - ./plugins:/app/plugins
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - default
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true
+
+volumes:
+  traccia_pgdata:

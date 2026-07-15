@@ -215,6 +215,33 @@ than the one that produced it. There's no automated schedule — cron your
 own call to `make backup` (or `scripts/backup.sh` directly) if you want
 one; this project deliberately runs no background jobs of its own.
 
+## Deploying to production
+
+`docker-compose.prod.yml` is the same stack hardened for a public host:
+Postgres stays on the internal network instead of binding `5432` on the
+host, the app publishes no port (a reverse proxy routes to it by domain),
+the database password comes from the environment, and both containers get
+memory limits and healthchecks.
+
+Required environment variables — the stack refuses to start without them:
+
+```bash
+ADMIN_TOKEN=        # machine credential for POST /api/v1/projects
+SESSION_SECRET=     # signs dashboard/admin login cookies
+POSTGRES_PASSWORD=  # database password (embedded into DATABASE_URL)
+```
+
+On [Dokploy](https://dokploy.com): create a **Compose** service pointing
+at this repo with `docker-compose.prod.yml` as the compose path, set the
+three variables in the Environment tab, then add a domain routing to the
+`traccia` service on port `8080` (the compose file already joins the
+external `dokploy-network` so Traefik can reach it). Migrations run
+automatically on the first boot of a fresh database volume — nothing to
+execute by hand.
+
+On a plain VPS without Dokploy: remove the `dokploy-network` block and put
+your own reverse proxy (Caddy, nginx) in front of the `traccia` service.
+
 ## Architecture
 
 Hexagonal: `internal/domain` and `internal/usecase` have no knowledge of
