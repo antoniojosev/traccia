@@ -1,11 +1,19 @@
 # Traccia
 
+[![CI](https://img.shields.io/github/actions/workflow/status/antoniojosev/traccia/ci.yml?branch=main&label=CI)](https://github.com/antoniojosev/traccia/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/antoniojosev/traccia?sort=semver)](https://github.com/antoniojosev/traccia/releases/latest)
+[![Go version](https://img.shields.io/github/go-mod/go-version/antoniojosev/traccia)](go.mod)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Self-hosted, privacy-first web analytics. One Go binary, one Postgres
 database, no external dependencies to track pageviews, custom events and
 errors across as many projects as you want.
 
 Built to be extended: swap storage, GeoIP resolution or user-agent parsing
-by implementing a small Go interface — no forking required.
+by implementing a small Go interface, or drop a `.js` file into a folder
+to react to events and add dashboard panels — no forking required.
+
+![Traccia dashboard — visits over time, top pages, referrers, devices, custom events, errors and a plugin-declared panel](docs/screenshots/dashboard.png)
 
 ## Why
 
@@ -15,12 +23,28 @@ own backend (no dashboard, no story for non-Go projects). Traccia aims to be
 both: a deployable product with sane defaults, and a set of ports you can
 swap without touching a usecase.
 
+Two ways to extend it, depending on how deep you need to go:
+
+- **Go ports** — `EventRepository`, `GeoResolver`, `UserAgentParser`, …
+  are interfaces; implement one, wire it in `cmd/api`, rebuild. See
+  [Architecture](#architecture).
+- **JS plugins** — a `.js` file in `PLUGINS_DIR`, run by an embedded
+  [goja](https://github.com/dop251/goja) runtime (no Node, no extra
+  process). Mutate or drop events before they're stored, fire webhooks,
+  declare dashboard panels. No recompiling. See [Plugins](#plugins).
+
 ## Quickstart
 
 ```bash
 cp .env.example .env   # set ADMIN_TOKEN to a long random string
 docker compose up -d
 ```
+
+Don't want to build? Every tagged release ships prebuilt binaries
+(linux/darwin, amd64/arm64) on the [Releases](https://github.com/antoniojosev/traccia/releases)
+page and a multi-arch image at `ghcr.io/antoniojosev/traccia`. The bare
+binary only needs `DATABASE_URL` pointing at a Postgres where
+`migrations/*.sql` has been applied (the SQL ships inside the tarball).
 
 Create a project at `http://localhost:8080/admin` — the first visit walks
 you through creating your own admin account (username + password, not
@@ -64,8 +88,12 @@ bot traffic (detected via user-agent) is excluded and so is anyone you've
 ```bash
 curl "http://localhost:8080/api/v1/stats?since=2026-07-01T00:00:00Z" \
   -H "Authorization: Bearer <api_key>"
+```
 
-# include bots, exclude anyone you've named (e.g. yourself)
+Both filters are query parameters — to include bots and exclude anyone
+you've named (e.g. yourself):
+
+```bash
 curl "http://localhost:8080/api/v1/stats?include_bots=true&exclude_named=true" \
   -H "Authorization: Bearer <api_key>"
 ```
@@ -302,6 +330,8 @@ plugins-examples reference plugin scripts (not loaded automatically —
 - A ClickHouse or SQLite `EventRepository` adapter — the port is already
   adapter-agnostic (see [Architecture](#architecture)), Postgres is just
   the only one implemented so far.
+- Real chart rendering for plugin panels — `chart: "line" | "bars"` is
+  accepted in the spec but every panel renders as a name/count table today.
 
 ## License
 

@@ -86,9 +86,11 @@ actual security boundary, not a suggestion.
   deliberate: a crashing plugin shouldn't silently start losing data.
 - **`registerPanel()` runs once, at load time** — it can't return different
   panels based on runtime state.
-- **No per-metadata-key aggregation in the dashboard yet.** A panel's
-  `groupBy` is captured in the spec but the dashboard doesn't compute
-  anything from it yet — see the main README's Dashboard section.
+- **Every panel renders as a table for now.** `groupBy` is real — the
+  dashboard counts that event's occurrences per value of the metadata key
+  (`metadata->>'key'`, events missing it are excluded) over the selected
+  range — but `chart` is only captured: `"line"` and `"bars"` currently
+  render the same name/count table as `"table"`.
 - **A broken plugin (syntax error, or one that defines neither `onEvent`
   nor `registerPanel`) is skipped with a log line, not fatal** — one bad
   script never stops the server from booting.
