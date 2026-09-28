@@ -1,0 +1,66 @@
+# GoReleaser config — run by .github/workflows/release.yml on every `v*` tag.
+# Local dry run: `goreleaser release --snapshot --clean` (needs goreleaser v2).
+version: 2
+
+project_name: traccia
+
+builds:
+  - id: traccia
+    # cmd/api is the only entrypoint: it wires the adapters and serves the
+    # API, the tracking script, the dashboard and the admin panel.
+    main: ./cmd/api
+    binary: traccia
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # The binary doesn't run migrations itself (Postgres applies them on
+    # first boot via docker-entrypoint-initdb.d), so ship the SQL next to
+    # it for anyone running the bare binary against their own database.
+    files:
+      - LICENSE
+      - README.md
+      - .env.example
+      - migrations/*
+      - docs/plugins.md
+      - plugins-examples/*
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  github:
+    owner: antoniojosev
+    name: traccia
+  prerelease: auto
+  footer: |
+    ## Docker
+
+    ```sh
+    docker pull ghcr.io/antoniojosev/traccia:{{ .Version }}
+    ```
