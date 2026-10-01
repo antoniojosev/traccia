@@ -1,0 +1,51 @@
+# Render Blueprint — https://render.com/docs/infrastructure-as-code
+#
+# Deploys the same stack as docker-compose.prod.yml on Render: the app built
+# from the Dockerfile in this repo plus a managed Render Postgres.
+#
+# Unlike the compose stacks, nothing applies migrations/*.sql here — Render
+# Postgres is managed, so there is no docker-entrypoint-initdb.d. Run them
+# once by hand against the database's EXTERNAL connection string before the
+# first visit (see README "Deploying to production > Render").
+#
+# This file lives on the deploy/render branch on purpose: main stays
+# platform-neutral. The service itself builds and auto-deploys from main
+# (`branch: main` below) — this branch only carries the Blueprint, so keep
+# it rebased on main when the README changes.
+#
+# Free-plan caveats: the web service sleeps after 15 min idle (first request
+# wakes it in ~1 min) and the free Postgres expires 30 days after creation.
+# Bump both `plan:` values to a paid tier to remove that.
+
+services:
+  - type: web
+    name: traccia
+    runtime: docker
+    plan: free
+    branch: main              # app code deploys from main, not from this branch
+    region: oregon            # must match the database region (internal URL)
+    healthCheckPath: /healthz
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: traccia-db
+          property: connectionString
+      - key: ADMIN_TOKEN
+        generateValue: true    # machine credential for POST /api/v1/projects
+      - key: SESSION_SECRET
+        generateValue: true    # signs dashboard/admin login cookies
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "120"
+      - key: LOGIN_RATE_LIMIT_PER_MINUTE
+        value: "10"
+      # PORT is injected by Render; config.go reads it.
+      # PLUGINS_DIR defaults to ./plugins — the image ships none, and a
+      # missing dir is fine. To run plugins on Render, COPY them into the
+      # image in the Dockerfile.
+
+databases:
+  - name: traccia-db
+    plan: free
+    region: oregon
+    databaseName: traccia
+    user: traccia

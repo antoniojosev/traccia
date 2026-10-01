@@ -270,6 +270,24 @@ execute by hand.
 On a plain VPS without Dokploy: remove the `dokploy-network` block and put
 your own reverse proxy (Caddy, nginx) in front of the `traccia` service.
 
+On [Render](https://render.com): the repo ships a `render.yaml` Blueprint
+(Docker web service + managed Postgres, both on the free plan). In the
+dashboard pick **New > Blueprint**, connect this repo and apply it —
+`ADMIN_TOKEN` and `SESSION_SECRET` are generated for you, `DATABASE_URL`
+is wired to the database. Render Postgres is managed, so nothing applies
+`migrations/*.sql` automatically: run them once against the database's
+**external** connection string before the first visit, e.g. without a
+local `psql`:
+
+```bash
+cat migrations/*.sql | docker run --rm -i postgres:16-alpine \
+  psql "<EXTERNAL_DATABASE_URL>?sslmode=require" -v ON_ERROR_STOP=1
+```
+
+Free-plan caveats: the service sleeps after 15 minutes idle and the free
+database expires 30 days after creation — bump `plan:` in `render.yaml`
+for anything beyond a demo.
+
 ## Architecture
 
 Hexagonal: `internal/domain` and `internal/usecase` have no knowledge of
