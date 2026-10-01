@@ -4,15 +4,27 @@
  * — same file, two distribution paths, zero build step either way.
  *
  * <script src="https://your-traccia.com/t.js" data-project="<project_id>" defer></script>
- * data-host is optional; it defaults to the script's own origin, which is
- * the common case when Traccia is self-hosted on the same domain as its
- * tracking script.
+ *
+ * Optional attributes:
+ *   data-host    — ingest origin; defaults to the script's own origin, which
+ *                  is the common case when Traccia is self-hosted on the same
+ *                  domain as its tracking script. Set it when you vendor this
+ *                  file into your own /public to dodge a cold-starting host.
+ *   data-errors  — "true" to also report uncaught exceptions and unhandled
+ *                  promise rejections as `error` events (capped per page load).
  */
 (function (window, document) {
   "use strict";
 
   var COOKIE_NAME = "_traccia_vid";
   var COOKIE_MAX_AGE = 60 * 60 * 24 * 365 * 2; // 2 years
+  var MAX_AUTO_ERRORS_PER_LOAD = 10;
+
+  // document.currentScript is only set while this file is being evaluated.
+  // Read it now, synchronously — if we waited for DOMContentLoaded (which
+  // init() may do) it would already be null and tracking would silently
+  // stay off for any tag loaded without `defer` or with `async`.
+  var scriptConfig = currentScriptConfig();
 
   function currentScriptConfig() {
     var script = document.currentScript;
@@ -20,6 +32,7 @@
     return {
       projectId: script.getAttribute("data-project"),
       host: script.getAttribute("data-host") || new URL(script.src).origin,
+      captureErrors: script.getAttribute("data-errors") === "true",
     };
   }
 
@@ -60,6 +73,8 @@
     this.projectId = config.projectId;
     this.host = config.host.replace(/\/$/, "");
     this.visitorId = getOrCreateVisitorId();
+    this._lastPath = null;
+    this._autoErrorsSent = 0;
   }
 
   Traccia.prototype._send = function (path, body) {
@@ -113,7 +128,14 @@
     });
   };
 
+  // One pageview per distinct path. SPA routers (vue-router, Next.js App
+  // Router, React Router) call history.replaceState on boot and before
+  // nearly every navigation to stash scroll/state — without this guard each
+  // of those would count as another visit to the same page.
   Traccia.prototype._trackPageview = function () {
+    var path = window.location.pathname;
+    if (path === this._lastPath) return;
+    this._lastPath = path;
     this.track();
   };
 
@@ -141,8 +163,45 @@
     });
   };
 
+  Traccia.prototype._captureErrors = function () {
+    var self = this;
+    var report = function (name, metadata) {
+      if (self._autoErrorsSent >= MAX_AUTO_ERRORS_PER_LOAD) return;
+      self._autoErrorsSent++;
+      self.trackError(name, metadata);
+    };
+    var describe = function (err) {
+      if (!err) return {};
+      if (typeof err !== "object") return { message: String(err).slice(0, 500) };
+      return {
+        message: String(err.message || "").slice(0, 500),
+        // Stack traces are the one thing worth paying bytes for — cap them
+        // so a pathological one can't blow past the request size.
+        stack: String(err.stack || "").slice(0, 2000),
+      };
+    };
+    window.addEventListener("error", function (evt) {
+      // Resource load failures (img/script 404s) also fire "error" on
+      // window, with no .message — skip them, they're not JS exceptions.
+      if (!evt.message && !evt.error) return;
+      var meta = describe(evt.error);
+      if (!meta.message) meta.message = String(evt.message || "").slice(0, 500);
+      if (evt.filename) meta.source = String(evt.filename).slice(0, 300);
+      if (evt.lineno) meta.line = evt.lineno;
+      if (evt.colno) meta.column = evt.colno;
+      var name = (evt.error && evt.error.name) || "Error";
+      report(name, meta);
+    });
+    window.addEventListener("unhandledrejection", function (evt) {
+      var reason = evt.reason;
+      var meta = describe(reason);
+      var name = (reason && typeof reason === "object" && reason.name) || "UnhandledRejection";
+      report(name, meta);
+    });
+  };
+
   function init() {
-    var config = currentScriptConfig();
+    var config = scriptConfig;
     if (!config || !config.projectId) {
       console.warn("traccia: missing data-project attribute, tracking disabled");
       return;
@@ -151,6 +210,7 @@
     var instance = new Traccia(config);
     instance._bindAutoEvents();
     instance._trackSpaNavigation();
+    if (config.captureErrors) instance._captureErrors();
     instance._trackPageview();
     window.traccia = instance;
   }

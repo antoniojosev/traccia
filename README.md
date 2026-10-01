@@ -67,8 +67,13 @@ response above (this ID is public by design — see [Security model](#security-m
 <script src="http://localhost:8080/t.js" data-project="<project_id>" defer></script>
 ```
 
-Pageviews are tracked automatically (including SPA route changes). For
-custom events:
+Pageviews are tracked automatically — one per distinct path, so SPA
+routers that call `history.replaceState` on every navigation don't
+double-count. Add `data-errors="true"` to the tag to also report uncaught
+exceptions and unhandled promise rejections as `error` events (message,
+stack, source, line; capped at 10 per page load). Vendoring `t.js` into
+your own `/public`? Point `data-host` at your Traccia origin. For custom
+events:
 
 ```js
 traccia.track("calculator_used", { from_currency: "USD", to_currency: "VES" });
@@ -82,8 +87,8 @@ Or declaratively, without writing JS:
 ```
 
 Read stats (requires the secret API key from project creation). By default,
-bot traffic (detected via user-agent) is excluded and so is anyone you've
-`identify()`'d with a `name`:
+bot traffic (detected via user-agent) is excluded; anyone you've
+`identify()`'d with a `name` is included unless you opt out:
 
 ```bash
 curl "http://localhost:8080/api/v1/stats?since=2026-07-01T00:00:00Z" \
