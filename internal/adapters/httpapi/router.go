@@ -50,6 +50,13 @@ func NewRouter(deps Deps) http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	// The bare origin has nothing to show by itself — every human entry
+	// point lives under /admin or /dashboard. Send people to the admin
+	// panel instead of a 404 (the "{$}" suffix matches only the exact root).
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	})
+
 	mux.HandleFunc("GET /t.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=3600")

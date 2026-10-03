@@ -172,3 +172,28 @@ func TestRouter_ServesTrackingScript(t *testing.T) {
 		t.Error("expected non-empty tracking script body")
 	}
 }
+
+func TestRouter_RootRedirectsToAdmin(t *testing.T) {
+	router := newTestRouter(t, 100)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 for GET /, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/admin" {
+		t.Fatalf("expected redirect to /admin, got %q", loc)
+	}
+}
+
+func TestRouter_UnknownPathStillNotFound(t *testing.T) {
+	router := newTestRouter(t, 100)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nope", nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for GET /nope, got %d", rec.Code)
+	}
+}
